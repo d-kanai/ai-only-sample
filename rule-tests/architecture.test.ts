@@ -2572,10 +2572,11 @@ function findStaticInInstanceClassViolations(root: string): string[] {
 // WHY 型注釈の全体を見る（最上位の型だけにしない）: string[]・string | undefined・readonly string[] のように合成した型で
 //   素通りさせない。
 // 限界（見逃す方向）: メソッドの引数・戻り値、アクセサ（get x(): string）、interface / type の項目、型の別名経由
-//   （type Name = string; readonly name: Name）、注釈の無いフィールドの推論（readonly x = ""）は見ない。名前が value なら Entity の
-//   フィールドでも通る。テストは対象外。
+//   （type Name = string; readonly name: Name）、注釈の無いフィールドの推論（readonly x = ""）、クラスのインデックスシグネチャ（[key: string]: number）は見ない。
+//   名前が value なら Entity のフィールドでも通る。テストは対象外。
 // 限界（多く検出する方向）: 関数の型のフィールド（readonly f: (x: string) => void）や、型引数に string を持つ参照
 //   （Map<string, Todo>）も、注釈に string を含むので違反になる。
+//   名前が識別子の value だけを中身として通すので、文字列の名前（'value'）や #value のフィールドも違反になる。
 const DOMAIN_VALUE_OBJECT = {
   id: "domain-value-object",
   name: "apps/backend/features/<f>/internal/domain/ のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）は、型注釈に string・number・bigint を含まない（string[]・string | undefined などの合成も違反。値は VO のクラスにする。VO が中身を持つ名前 value のフィールドは可。boolean・Date・ほかのクラスや型の参照は可。テストは除く）",
