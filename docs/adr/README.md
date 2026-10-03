@@ -154,5 +154,6 @@ ADR は分類ごとのディレクトリに置く。分類は次の 4 つだけ�
 | 2026-10-02 | 常時読み込む要点を .claude/general から .claude/rules/workflow に移し、rules を分類のサブディレクトリに分ける | 採用 | [20261002-always-loaded-rules-in-rules-workflow.md](workflow/20261002-always-loaded-rules-in-rules-workflow.md) |
 | 2026-10-02 | .claude/rules/code の規則はカテゴリ・WHAT・WHY・強制の 4 列の表で書き、何が止めるかを行ごとに示す | 採用 | [20261002-code-rules-as-tables.md](workflow/20261002-code-rules-as-tables.md) |
 | 2026-10-02 | rule-review は PR を作った後に回し、結果を PR のレビュー（行コメントとまとめ）に残してから直す | 採用 | [20261002-rule-review-results-on-pr.md](workflow/20261002-rule-review-results-on-pr.md) |
-| 2026-10-02 | main に前回のレビュー以降に入った差分を、GitHub Actions の Claude Code で日次セキュリティレビューする | 採用 | [20261002-daily-security-review-in-actions.md](workflow/20261002-daily-security-review-in-actions.md) |
+| 2026-10-02 | main に前回のレビュー以降に入った差分を、GitHub Actions の Claude Code で日次セキュリティレビューする | 置き換え（→ workflow/20261003-security-review-opus-file-by-file.md） | [20261002-daily-security-review-in-actions.md](workflow/20261002-daily-security-review-in-actions.md) |
+| 2026-10-03 | 日次セキュリティレビューは Opus で、変更ファイルを 1 つずつ読ませ、読んでいないファイルを出す | 採用 | [20261003-security-review-opus-file-by-file.md](workflow/20261003-security-review-opus-file-by-file.md) |
 | 2026-10-03 | ヘルスチェックは DB まで見る 1 本の GET /api/health にし、停止は Next.js の標準のシグナル処理に任せる | 採用 | [20261003-health-check-and-shutdown.md](architecture/20261003-health-check-and-shutdown.md) |

@@ -1,7 +1,7 @@
 # main に前回のレビュー以降に入った差分を、GitHub Actions の Claude Code で日次セキュリティレビューする
 
 - 日付: 2026-10-02
-- 状態: 採用
+- 状態: 置き換え（→ workflow/20261003-security-review-opus-file-by-file.md）
 - 関連: Issue #354 / `.github/workflows/security-review.yml` / `.claude/rules/tooling/github-actions.md`
 
 ## 背景
