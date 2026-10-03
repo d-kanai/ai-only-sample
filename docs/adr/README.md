@@ -156,3 +156,4 @@ ADR は分類ごとのディレクトリに置く。分類は次の 4 つだけ�
 | 2026-10-02 | rule-review は PR を作った後に回し、結果を PR のレビュー（行コメントとまとめ）に残してから直す | 採用 | [20261002-rule-review-results-on-pr.md](workflow/20261002-rule-review-results-on-pr.md) |
 | 2026-10-02 | main に前回のレビュー以降に入った差分を、GitHub Actions の Claude Code で日次セキュリティレビューする | 採用 | [20261002-daily-security-review-in-actions.md](workflow/20261002-daily-security-review-in-actions.md) |
 | 2026-10-03 | ヘルスチェックは DB まで見る 1 本の GET /api/health にし、停止は Next.js の標準のシグナル処理に任せる | 採用 | [20261003-health-check-and-shutdown.md](architecture/20261003-health-check-and-shutdown.md) |
+| 2026-10-03 | ドメイン機能の開発は 4 種の .feature に仕様を書き、整合性を確かめてから TDD で実装する | 採用 | [20261003-spec-first-feature-development.md](workflow/20261003-spec-first-feature-development.md) |
