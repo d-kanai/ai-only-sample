@@ -77,6 +77,14 @@ jobs:
           jq 'del(.hooks, .model)' .claude/settings.json > "$RUNNER_TEMP/settings.json"
           mv "$RUNNER_TEMP/settings.json" .claude/settings.json
 
+      # git が非 ASCII のパスを "src/\346\227..." のように引用しないようにする（この runner の checkout の .git/config だけ）。
+      # WHY: Claude は `git diff --name-only` の出力のパスを `git diff ... -- <file>` に渡すので、引用されたままだと差分が空になり、
+      #   そのファイルを読まずに終わる（Codex の指摘）。`git -c core.quotePath=false` は --allowedTools の `Bash(git diff:*)` に
+      #   一致しないので、プロンプトではなく設定で切る。
+      - name: Disable git path quoting for Claude
+        if: steps.range.outputs.count != '0'
+        run: git config core.quotePath false
+
       # 差分が 0 件の日は呼ばない（消費 0）。
       # claude_code_oauth_token: daiki が `claude setup-token` で作ったトークン（サブスクの枠を使う。repo の Secret）。
       # claude_args:
