@@ -3,6 +3,9 @@ import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";
 import { Clock } from "@repo/shared/now";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 import { Todo } from "../../../features/todo/internal/domain/todo";
+import { TodoId } from "../../../features/todo/internal/domain/todo-id";
+import { TodoStatusChange } from "../../../features/todo/internal/domain/todo-status-change";
+import { TodoTitle } from "../../../features/todo/internal/domain/todo-title";
 import { DomainError } from "../../../shared/error/domain-error";
 import type { ErrorKey } from "../../../shared/error/error-key";
 
@@ -12,7 +15,9 @@ import type { ErrorKey } from "../../../shared/error/error-key";
 // WHY `*` を And で定義する: vitest-cucumber 8.0.0 は `*` の step を And として扱う（API 仕様の step と同じ）。
 // step 1 つ = 1 テストで、前の step に依存しない（前提から検証までを step の中で完結させる。Stryker が変異を通る
 //   テストだけに絞っても前提が飛ばされない）。
-// 技術の仕組み（読み込んだときの値・値の凍結・型を偽った値・作成日時の型・id の形）は todo.test.ts に残す。
+// 技術の仕組み（読み込んだときの値・値の凍結・型を偽った値・作成日時の型）は todo.test.ts に、id の形は todo-id.test.ts に残す。
+// タイトルの規則は値オブジェクト TodoTitle が持つ（Issue #423）。step は利用者の操作と同じく、タイトルの文字列から TodoTitle を作って
+//   Todo に渡す（作る・名前を変える）。拒否は TodoTitle を作るところで起きる。
 
 // WHY 時計（Clock.now）を差し替える: Todo.create は作成日時を、changeCompletion は履歴の時刻を Clock.now() から入れる
 //   （引数では受け取らない）。時刻を決めるには現在時刻の唯一の出口（apps/shared/now.ts）を差し替えるしかない
@@ -24,7 +29,7 @@ const COMPLETED_AT = new Date("2026-09-28T01:00:00.000Z");
 const REOPENED_AT = new Date("2026-09-28T02:00:00.000Z");
 const BEFORE_CREATED = new Date("2026-09-27T23:59:59.999Z");
 // 保存してあった Todo を読み出す（reconstruct）ときの値。uuid の形の固定の値。
-const STORED_ID = "8d0f4f39-6f0b-4a39-9d53-0a3f8b1c2d4e";
+const STORED_ID = new TodoId("8d0f4f39-6f0b-4a39-9d53-0a3f8b1c2d4e");
 
 beforeEach(() => {
   vi.mocked(Clock.now).mockReturnValue(CREATED_AT);
@@ -59,16 +64,26 @@ const EMPTY = { key: "todo.title.empty" } as const;
 const TOO_LONG = { key: "todo.title.tooLong", params: { max: 100 } } as const;
 const BROKEN_HISTORY = { key: "todo.statusChanges.invalid" } as const;
 
+// タイトルの文字列から Todo を作る（利用者がタイトルを書いて作るのと同じ。拒否はタイトルの値を作るところで起きる）。
+function create(title: string): Todo {
+  return Todo.create(new TodoTitle(title));
+}
+
+// 完了の履歴の 1 件。
+function change(completed: boolean, changedAt: Date): TodoStatusChange {
+  return new TodoStatusChange({ completed, changedAt });
+}
+
 // 保存してあった未完了の Todo の値。override で一部を壊す。
 function storedValues(
   override: Partial<Parameters<typeof Todo.reconstruct>[0]> = {},
 ): Parameters<typeof Todo.reconstruct>[0] {
   return {
     id: STORED_ID,
-    title: "牛乳を買う",
+    title: new TodoTitle("牛乳を買う"),
     completed: false,
     createdAt: CREATED_AT,
-    statusChanges: [{ completed: false, changedAt: CREATED_AT }],
+    statusChanges: [change(false, CREATED_AT)],
     ...override,
   };
 }
@@ -81,10 +96,10 @@ describeFeature(feature, ({ Rule }) => {
       And("作った Todo は未完了で、作成日時は作った時刻になる", () => {
         // given: beforeEach で現在時刻を CREATED_AT にしてある
         // when
-        const todo = Todo.create("牛乳を買う");
+        const todo = create("牛乳を買う");
 
         // then
-        expect(todo.title).toBe("牛乳を買う");
+        expect(todo.title.value).toBe("牛乳を買う");
         expect(todo.completed).toBe(false);
         expect(todo.createdAt).toEqual(CREATED_AT);
       });
@@ -93,12 +108,10 @@ describeFeature(feature, ({ Rule }) => {
         () => {
           // given: beforeEach で現在時刻を CREATED_AT にしてある
           // when
-          const todo = Todo.create("牛乳を買う");
+          const todo = create("牛乳を買う");
 
           // then
-          expect(todo.statusChanges).toStrictEqual([
-            { completed: false, changedAt: CREATED_AT },
-          ]);
+          expect(todo.statusChanges).toStrictEqual([change(false, CREATED_AT)]);
         },
       );
     });
@@ -109,12 +122,12 @@ describeFeature(feature, ({ Rule }) => {
       And("1 文字と 100 文字のタイトルで作れる", () => {
         // given: 前提なし
         // when
-        const shortest = Todo.create("a");
-        const longest = Todo.create("a".repeat(100));
+        const shortest = create("a");
+        const longest = create("a".repeat(100));
 
         // then
-        expect(shortest.title).toBe("a");
-        expect(longest.title).toBe("a".repeat(100));
+        expect(shortest.title.value).toBe("a");
+        expect(longest.title.value).toBe("a".repeat(100));
       });
       And("絵文字だけの 100 文字のタイトルで作れる", () => {
         // given
@@ -122,26 +135,26 @@ describeFeature(feature, ({ Rule }) => {
         const title = "🍎".repeat(100);
 
         // when
-        const todo = Todo.create(title);
+        const todo = create(title);
 
         // then
-        expect(todo.title).toBe(title);
+        expect(todo.title.value).toBe(title);
       });
       And("タイトルの前後の空白は除いて保存される", () => {
         // given: 前提なし
         // when
-        const todo = Todo.create("  牛乳を買う \n");
+        const todo = create("  牛乳を買う \n");
 
         // then
-        expect(todo.title).toBe("牛乳を買う");
+        expect(todo.title.value).toBe("牛乳を買う");
       });
       And("前後の空白を除いて 100 文字なら作れる", () => {
         // given: 前提なし
         // when
-        const todo = Todo.create(`  ${"a".repeat(100)}\t`);
+        const todo = create(`  ${"a".repeat(100)}\t`);
 
         // then
-        expect(todo.title).toBe("a".repeat(100));
+        expect(todo.title.value).toBe("a".repeat(100));
       });
     });
 
@@ -149,7 +162,7 @@ describeFeature(feature, ({ Rule }) => {
       And("空のタイトルは、空という理由で拒否される", () => {
         // given: 前提なし
         // when
-        const action = () => Todo.create("");
+        const action = () => create("");
 
         // then
         expectRejected(action, EMPTY);
@@ -157,7 +170,7 @@ describeFeature(feature, ({ Rule }) => {
       And("空白だけのタイトルは、空という理由で拒否される", () => {
         // given: 前提なし
         // when
-        const action = () => Todo.create("   \t\n");
+        const action = () => create("   \t\n");
 
         // then
         expectRejected(action, EMPTY);
@@ -167,7 +180,7 @@ describeFeature(feature, ({ Rule }) => {
         () => {
           // given: 前提なし
           // when
-          const action = () => Todo.create("a".repeat(101));
+          const action = () => create("a".repeat(101));
 
           // then
           expectRejected(action, TOO_LONG);
@@ -178,7 +191,7 @@ describeFeature(feature, ({ Rule }) => {
         () => {
           // given: 前提なし
           // when
-          const action = () => Todo.create(` ${"a".repeat(101)} `);
+          const action = () => create(` ${"a".repeat(101)} `);
 
           // then
           expectRejected(action, TOO_LONG);
@@ -189,7 +202,7 @@ describeFeature(feature, ({ Rule }) => {
         () => {
           // given: 前提なし
           // when
-          const action = () => Todo.create("🍎".repeat(101));
+          const action = () => create("🍎".repeat(101));
 
           // then
           expectRejected(action, TOO_LONG);
@@ -200,20 +213,20 @@ describeFeature(feature, ({ Rule }) => {
     RuleScenario("名前を変えるときのタイトル", ({ And }) => {
       And("新しいタイトルは、前後の空白を除いて保存される", () => {
         // given
-        const todo = Todo.create("牛乳を買う");
+        const todo = create("牛乳を買う");
 
         // when
-        const renamed = todo.rename(" 卵を買う ");
+        const renamed = todo.rename(new TodoTitle(" 卵を買う "));
 
         // then
-        expect(renamed.title).toBe("卵を買う");
+        expect(renamed.title.value).toBe("卵を買う");
       });
       And("空白だけのタイトルには変えられず、空という理由で拒否される", () => {
         // given
-        const todo = Todo.create("牛乳を買う");
+        const todo = create("牛乳を買う");
 
         // when
-        const action = () => todo.rename(" ");
+        const action = () => todo.rename(new TodoTitle(" "));
 
         // then
         expectRejected(action, EMPTY);
@@ -222,10 +235,10 @@ describeFeature(feature, ({ Rule }) => {
         "101 文字のタイトルには変えられず、長すぎるという理由で拒否される",
         () => {
           // given
-          const todo = Todo.create("牛乳を買う");
+          const todo = create("牛乳を買う");
 
           // when
-          const action = () => todo.rename("a".repeat(101));
+          const action = () => todo.rename(new TodoTitle("a".repeat(101)));
 
           // then
           expectRejected(action, TOO_LONG);
@@ -241,23 +254,23 @@ describeFeature(feature, ({ Rule }) => {
         And("完了の Todo の名前を変えても、完了のまま", () => {
           // given
           // WHY 完了から始める: 未完了から始めると、名前を変えるときに未完了に戻す誤りでも結果が同じで見逃す。
-          const completed = Todo.create("牛乳を買う").changeCompletion(true);
+          const completed = create("牛乳を買う").changeCompletion(true);
 
           // when
-          const renamed = completed.rename("卵を買う");
+          const renamed = completed.rename(new TodoTitle("卵を買う"));
 
           // then
           expect(renamed.completed).toBe(true);
-          expect(renamed.title).toBe("卵を買う");
+          expect(renamed.title.value).toBe("卵を買う");
         });
         And("名前を変えても、作成日時は変わらない", () => {
           // given
           // WHY 名前を変える時刻を作成日時と変える: 名前を変えるときに現在時刻を読み直す誤りでは作成日時が変わって落ちる。
-          const todo = Todo.create("牛乳を買う");
+          const todo = create("牛乳を買う");
           vi.mocked(Clock.now).mockReturnValue(COMPLETED_AT);
 
           // when
-          const renamed = todo.rename("卵を買う");
+          const renamed = todo.rename(new TodoTitle("卵を買う"));
 
           // then
           expect(renamed.createdAt).toEqual(CREATED_AT);
@@ -267,15 +280,15 @@ describeFeature(feature, ({ Rule }) => {
           vi.mocked(Clock.now)
             .mockReturnValueOnce(CREATED_AT)
             .mockReturnValue(COMPLETED_AT);
-          const todo = Todo.create("牛乳を買う").changeCompletion(true);
+          const todo = create("牛乳を買う").changeCompletion(true);
 
           // when
-          const renamed = todo.rename("卵を買う");
+          const renamed = todo.rename(new TodoTitle("卵を買う"));
 
           // then
           expect(renamed.statusChanges).toStrictEqual([
-            { completed: false, changedAt: CREATED_AT },
-            { completed: true, changedAt: COMPLETED_AT },
+            change(false, CREATED_AT),
+            change(true, COMPLETED_AT),
           ]);
         });
       });
@@ -290,7 +303,7 @@ describeFeature(feature, ({ Rule }) => {
           "未完了の Todo を完了にすると完了になり、完了にした時刻の「完了」が履歴の最後に追加される",
           () => {
             // given
-            const todo = Todo.create("牛乳を買う");
+            const todo = create("牛乳を買う");
             vi.mocked(Clock.now).mockReturnValue(COMPLETED_AT);
 
             // when
@@ -300,8 +313,8 @@ describeFeature(feature, ({ Rule }) => {
             expect(completed.completed).toBe(true);
             expect(completed.createdAt).toEqual(CREATED_AT);
             expect(completed.statusChanges).toStrictEqual([
-              { completed: false, changedAt: CREATED_AT },
-              { completed: true, changedAt: COMPLETED_AT },
+              change(false, CREATED_AT),
+              change(true, COMPLETED_AT),
             ]);
           },
         );
@@ -313,7 +326,7 @@ describeFeature(feature, ({ Rule }) => {
               .mockReturnValueOnce(CREATED_AT)
               .mockReturnValueOnce(COMPLETED_AT)
               .mockReturnValue(REOPENED_AT);
-            const completed = Todo.create("牛乳を買う").changeCompletion(true);
+            const completed = create("牛乳を買う").changeCompletion(true);
 
             // when
             const reopened = completed.changeCompletion(false);
@@ -321,21 +334,21 @@ describeFeature(feature, ({ Rule }) => {
             // then
             expect(reopened.completed).toBe(false);
             expect(reopened.statusChanges).toStrictEqual([
-              { completed: false, changedAt: CREATED_AT },
-              { completed: true, changedAt: COMPLETED_AT },
-              { completed: false, changedAt: REOPENED_AT },
+              change(false, CREATED_AT),
+              change(true, COMPLETED_AT),
+              change(false, REOPENED_AT),
             ]);
           },
         );
         And("作った時刻と同じ時刻に完了にしても受け付ける", () => {
           // given: beforeEach で現在時刻を CREATED_AT のままにしてある（作成と完了が同じ時刻）
           // when
-          const todo = Todo.create("牛乳を買う").changeCompletion(true);
+          const todo = create("牛乳を買う").changeCompletion(true);
 
           // then
           expect(todo.statusChanges).toStrictEqual([
-            { completed: false, changedAt: CREATED_AT },
-            { completed: true, changedAt: CREATED_AT },
+            change(false, CREATED_AT),
+            change(true, CREATED_AT),
           ]);
         });
       });
@@ -345,7 +358,7 @@ describeFeature(feature, ({ Rule }) => {
         //   何も書かない）。現在時刻を読まないことは技術の仕組みなので todo.test.ts が見る。
         And("未完了の Todo を未完了にしても、何も変わらない", () => {
           // given
-          const todo = Todo.create("牛乳を買う");
+          const todo = create("牛乳を買う");
 
           // when
           const changed = todo.changeCompletion(false);
@@ -355,7 +368,7 @@ describeFeature(feature, ({ Rule }) => {
         });
         And("完了の Todo を完了にしても、何も変わらない", () => {
           // given
-          const todo = Todo.create("牛乳を買う").changeCompletion(true);
+          const todo = create("牛乳を買う").changeCompletion(true);
 
           // when
           const changed = todo.changeCompletion(true);
@@ -373,9 +386,9 @@ describeFeature(feature, ({ Rule }) => {
       And("同じ時刻の履歴が並んでいても、読み出せる", () => {
         // given
         const statusChanges = [
-          { completed: false, changedAt: CREATED_AT },
-          { completed: true, changedAt: COMPLETED_AT },
-          { completed: false, changedAt: COMPLETED_AT },
+          change(false, CREATED_AT),
+          change(true, COMPLETED_AT),
+          change(false, COMPLETED_AT),
         ];
 
         // when
@@ -386,7 +399,7 @@ describeFeature(feature, ({ Rule }) => {
       });
       And("最初の履歴が作成日時より後でも、読み出せる", () => {
         // given
-        const statusChanges = [{ completed: true, changedAt: COMPLETED_AT }];
+        const statusChanges = [change(true, COMPLETED_AT)];
 
         // when
         const todo = Todo.reconstruct(
@@ -416,8 +429,8 @@ describeFeature(feature, ({ Rule }) => {
           const values = storedValues({
             completed: false,
             statusChanges: [
-              { completed: false, changedAt: CREATED_AT },
-              { completed: true, changedAt: COMPLETED_AT },
+              change(false, CREATED_AT),
+              change(true, COMPLETED_AT),
             ],
           });
 
@@ -434,9 +447,9 @@ describeFeature(feature, ({ Rule }) => {
           // given
           const values = storedValues({
             statusChanges: [
-              { completed: false, changedAt: CREATED_AT },
-              { completed: true, changedAt: REOPENED_AT },
-              { completed: false, changedAt: COMPLETED_AT },
+              change(false, CREATED_AT),
+              change(true, REOPENED_AT),
+              change(false, COMPLETED_AT),
             ],
           });
 
@@ -452,7 +465,7 @@ describeFeature(feature, ({ Rule }) => {
         () => {
           // given
           const values = storedValues({
-            statusChanges: [{ completed: false, changedAt: BEFORE_CREATED }],
+            statusChanges: [change(false, BEFORE_CREATED)],
           });
 
           // when

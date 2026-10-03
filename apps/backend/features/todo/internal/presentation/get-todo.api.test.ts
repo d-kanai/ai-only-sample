@@ -6,6 +6,7 @@ import { InMemoryTodoRepository } from "../../../../test-support/todo/todo-repos
 import { inMemoryTransaction } from "../../../../test-support/transaction-runner.in-memory";
 import { GetTodoQuery } from "../application/get-todo.query";
 import { Todo } from "../domain/todo";
+import { TodoTitle } from "../domain/todo-title";
 import { PostgresTodoRepository } from "../infra/todo-repository.postgres";
 import {
   GetTodoApi,
@@ -87,17 +88,20 @@ describe("GET /api/todos/:id", () => {
   test("200 と Todo（GetTodoResponse）を返す", async () => {
     // given
     const { repository, GET } = setup();
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await repository.insert(todo, inMemoryTransaction);
 
     // when
-    const response = await GET(getRequest(todo.id), context(todo.id));
+    const response = await GET(
+      getRequest(todo.id.value),
+      context(todo.id.value),
+    );
 
     // then
     expect(response.status).toBe(200);
     const body = (await response.json()) as GetTodoResponse;
     expect(body).toEqual({
-      id: todo.id,
+      id: todo.id.value,
       title: "牛乳を買う",
       completed: false,
       createdAt: todo.createdAt.toISOString(),
@@ -108,17 +112,20 @@ describe("GET /api/todos/:id", () => {
   //   ことを、Postgres の Repository が呼ばれることで固定する。findById を差し替えるので DB には接続しない。
   test("本番の GET は Postgres の Repository から読む", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     const findById = vi
       .spyOn(PostgresTodoRepository.prototype, "findById")
       .mockResolvedValue(todo);
 
     // when
-    const response = await productionGet(getRequest(todo.id), context(todo.id));
+    const response = await productionGet(
+      getRequest(todo.id.value),
+      context(todo.id.value),
+    );
 
     // then
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ id: todo.id });
+    await expect(response.json()).resolves.toMatchObject({ id: todo.id.value });
     expect(findById.mock.calls).toEqual([[todo.id]]);
   });
 

@@ -56,8 +56,8 @@ export class ListTodosApi {
   //   インスタンスの状態（コンストラクタで受け取った query / command）は使わないが static にしない: インスタンスで使うクラスに static を置かない（規則 no-static-in-instance-class。Issue #300）。
   private toResponseItem(todo: Todo): ListTodosResponse["todos"][number] {
     return {
-      id: todo.id,
-      title: todo.title,
+      id: todo.id.value,
+      title: todo.title.value,
       completed: todo.completed,
       createdAt: todo.createdAt.toISOString(),
     };

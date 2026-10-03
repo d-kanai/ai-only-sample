@@ -1,4 +1,5 @@
 import { Todo } from "../../features/todo/internal/domain/todo";
+import type { TodoId } from "../../features/todo/internal/domain/todo-id";
 import {
   RequiredTodo,
   type TodoRepository,
@@ -15,6 +16,8 @@ import type { Transaction } from "../../shared/transaction/transaction";
 // WHY test-support/<feature>/ に置く（Issue #191）: テストだけが使うコードで、features/todo/internal/infra/ に置くと本番のコードと
 //   見分けが付かない。*.in-memory.ts は test-support の下だけに置く（rule-tests/test-support.test.ts の in-memory-placement）。
 // WHY Map を使う: id での取得・上書き・削除がそのまま書け、挿入順も保つ（作成日時が同じ Todo の並びが安定する）。
+// WHY Map のキーは id の値（文字列。TodoId のインスタンスにしない）: Map はキーを参照で比べるので、同じ値の別の TodoId（リクエストから
+//   作った id）で引けなくなる。
 // WHY Todo をそのまま保持してよい: Todo は不変（apps/backend/features/todo/internal/domain/todo.ts）なので、
 //   呼び出し側が取り出した Todo を通して保持中のデータが書き換わることはない。
 // WHY 取り出すときは保持中の値から Todo.reconstruct で作り直す（保持中のインスタンスを返さない。Issue #165）:
@@ -40,18 +43,18 @@ export class InMemoryTodoRepository implements TodoRepository {
         a.createdAt.getTime() - b.createdAt.getTime() ||
         // id は Map のキーなので同じ値は無く、等しい場合は起きない。
         // Stryker disable next-line EqualityOperator: id は一意なので、< を <= にしても同じ順になる（等価な変異）。
-        (a.id < b.id ? -1 : 1),
+        (a.id.value < b.id.value ? -1 : 1),
     );
   }
 
-  async findById(id: string): Promise<Todo | undefined> {
-    const stored = this.todos.get(id);
+  async findById(id: TodoId): Promise<Todo | undefined> {
+    const stored = this.todos.get(id.value);
     return stored === undefined ? undefined : this.load(stored);
   }
 
   // WHY findById を通す（Map を直接読まない）: テストが findById を spy したときにも findByIdForUpdate 経由の問い合わせが記録される
   //   ようにする（presentation のテストの「Repository が呼ばれない」）。行ロックは無い（InMemory の呼び出しは直列に動く）。
-  async findByIdForUpdate(id: string, _tx: Transaction): Promise<Todo> {
+  async findByIdForUpdate(id: TodoId, _tx: Transaction): Promise<Todo> {
     return RequiredTodo.of(await this.findById(id), id);
   }
 
@@ -60,13 +63,13 @@ export class InMemoryTodoRepository implements TodoRepository {
   async insert(todo: Todo, _tx: Transaction): Promise<void> {
     if (todo.origin !== undefined) {
       throw new Error(
-        `insert takes a new Todo (Todo.create), but got a loaded one: ${todo.id}`,
+        `insert takes a new Todo (Todo.create), but got a loaded one: ${todo.id.value}`,
       );
     }
-    if (this.todos.has(todo.id)) {
-      throw new Error(`todo already exists: ${todo.id}`);
+    if (this.todos.has(todo.id.value)) {
+      throw new Error(`todo already exists: ${todo.id.value}`);
     }
-    this.todos.set(todo.id, todo);
+    this.todos.set(todo.id.value, todo);
   }
 
   // Postgres の実装（update）と同じ意味にする（Issue #165・#188・#215）: 読み込んだときから変わった項目（title・completed）だけを
@@ -81,46 +84,50 @@ export class InMemoryTodoRepository implements TodoRepository {
   //   （Postgres ではトランザクションで戻る）。
   // WHY Todo.reconstruct で置く: 保持中の値と差分を合わせた値で作り直す（origin はその値になるが、取り出すときに
   //   load で作り直すので使われない）。
+  // WHY 差分は値（タイトルの文字列）で比べる（Issue #423）: Postgres の実装は行の値（title の文字列）で比べる。値オブジェクトのまま
+  //   ChangedProps.of に渡すと参照で比べ、同じタイトルに rename しただけで「変わった」になり、Postgres（何も書かない）と結果が変わる。
+  //   変わった項目は、今の Todo の値（値オブジェクト）で保持中の値を置き換える。
   async update(todo: Todo, _tx: Transaction): Promise<void> {
     const { origin } = todo;
     if (origin === undefined) {
       throw new Error(
-        `update takes a loaded Todo (findByIdForUpdate), but got a new one: ${todo.id}`,
+        `update takes a loaded Todo (findByIdForUpdate), but got a new one: ${todo.id.value}`,
       );
     }
-    const changed = ChangedProps.of(origin, {
-      title: todo.title,
-      completed: todo.completed,
-    });
+    const changed = ChangedProps.of(
+      { title: origin.title.value, completed: origin.completed },
+      { title: todo.title.value, completed: todo.completed },
+    );
     const appended = todo.statusChanges.slice(origin.statusChanges.length);
     if (Object.keys(changed).length === 0 && appended.length === 0) {
       return;
     }
-    const stored = this.todos.get(todo.id);
+    const stored = this.todos.get(todo.id.value);
     if (stored === undefined) {
-      throw new Error(`todos has no row to update: ${todo.id}`);
+      throw new Error(`todos has no row to update: ${todo.id.value}`);
     }
     if (
       appended.length > 0 &&
       stored.statusChanges.length !== origin.statusChanges.length
     ) {
       throw new Error(
-        `todo status changes were appended by another update: ${todo.id}`,
+        `todo status changes were appended by another update: ${todo.id.value}`,
       );
     }
     this.todos.set(
-      todo.id,
+      todo.id.value,
       Todo.reconstruct({
         ...this.values(stored),
-        ...changed,
+        title: "title" in changed ? todo.title : stored.title,
+        completed: changed.completed ?? stored.completed,
         statusChanges: [...stored.statusChanges, ...appended],
       }),
     );
   }
 
   // 無い id なら何もしない（Postgres は消した行が 0 件）。
-  async delete(id: string, _tx: Transaction): Promise<void> {
-    this.todos.delete(id);
+  async delete(id: TodoId, _tx: Transaction): Promise<void> {
+    this.todos.delete(id.value);
   }
   // 保持中の Todo から「読み込んだ Todo」（今の値を origin に持つ）を作る。
   // WHY private メソッド（Issue #262。以前はファイルの最上位の関数）: テストの補助も最上位に関数を置かない（ADR

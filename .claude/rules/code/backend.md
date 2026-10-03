@@ -130,7 +130,7 @@ paths:
 | リクエスト | 未知のキーは拒否する（`z.strictObject`） | 打ち間違えた項目・別の API の項目を黙って捨てると、変更が反映されないまま成功する | レビュー |
 | リクエスト | 動的セグメントの `id` は `ResourceId.parseUuid`（`z.uuid()`）で本文より先に確かめ、形が違えば 404（無い id と同じ契約） | - | レビュー |
 | リクエスト | `z.uuid()` は RFC 9562 の形（版の桁 1〜8、variant 8 / 9 / a / b、nil と max）だけを受け付け大文字も通す。id は `randomUUID`（v4）で作る | zod 4.6.5 の挙動。Postgres の uuid 型より狭い | 説明 |
-| domain | 値の規則の正は domain の zod スキーマで、Entity のコンストラクタがそれで検証し、違反は `DomainError("validation_error", key, params)` → 400（`errors` は付かない） | - | レビュー |
+| domain | 値の規則の正は domain の zod スキーマで、値オブジェクト（VO）と Entity のコンストラクタがそれで検証し、違反は `DomainError("validation_error", key, params)` → 400（`errors` は付かない） | - | レビュー |
 | domain | 文字数はコードポイント数で数え（`refine` と `Array.from`）、features の domain で zod の `.min(` / `.max(` を使わない（`Math.min` / `Math.max` は可）。`.length(`・`.nonempty(`・`z.minLength(` / `z.maxLength(` も使わない | zod の長さは `String#length` で数え、絵文字 1 文字を 2 と数える。機械は `.min(` / `.max(` だけを見る | `rule-tests/domain-validation.test.ts` の `no-zod-length-in-domain` |
 | domain | domain で zod の `parse` / `safeParse` を直接呼ばず `DomainValidation.validated` を通す | - | `rule-tests/domain-validation.test.ts` の `no-direct-zod-parse-in-domain` |
 | domain | `validation_error` の DomainError を作るのは backend 全体で `validate.ts` だけ | - | `rule-tests/domain-validation.test.ts` の `validation-error-only-in-validate` |
@@ -144,7 +144,14 @@ paths:
 | 生成 | `<Entity>.create(...)` は id・作成日時（`Clock.now()`）・初期状態を自分で決め、作成日時を引数で受け取らない。DB の行から戻す `reconstruct` は保存済みの値を受け取る | 作ったときの時刻が入るのは生成ルールで、呼び出し側が渡せるとルールが漏れる | レビュー |
 | 完全コンストラクタ | Entity の private コンストラクタが毎回、値のすべてを不変条件のスキーマで検証する。`create`・`reconstruct`・遷移メソッドはコンストラクタに値を渡すだけで、口ごとに検証の範囲を分けない | Entity 型の値 = 不変条件を満たす値が常に成り立つ | レビュー |
 | 完全コンストラクタ | 規則を変えるときは既存のデータを移行して追従する（スキル `db-migration`） | - | レビュー |
-| 完全コンストラクタ | branded 型は使わない | Entity 型そのものが不変条件を満たす値を表す | レビュー |
+| 値オブジェクト | 値の規則（長さ・範囲・形式）を持つ string / number は Entity のフィールドに素のまま持たず、値オブジェクト（VO）のクラスにする（`<Entity>Id`・`<Entity>Title` など）。features の domain のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）の型注釈に `string` / `number` / `bigint` を含めない（`string[]`・`string \| undefined` などの合成も）。VO が中身を持つフィールドの名前 `value` だけ通す | 型が検証済みの値を表し、規則が VO のコンストラクタ 1 か所にまとまる。素の string は検証せずに受け渡せ、別の値（id とタイトル）を取り違えても型で止まらない。決定は ADR `docs/adr/architecture/20261003-value-objects-in-domain.md` | `rule-tests/architecture.test.ts` の `domain-value-object` |
+| 値オブジェクト | `domain-value-object` の限界: メソッドの引数・戻り値、アクセサ、interface / type の項目、型の別名経由（`type Name = string`）、注釈の無いフィールドの推論、クラスのインデックスシグネチャは見ない。名前が `value` なら Entity のフィールドでも通る。関数の型や型引数（`Map<string, X>`）のフィールド、`'value'`・`#value` は違反になる | 限界（詳細は `.claude/rules/code/architecture-check.md`） | レビュー |
+| 値オブジェクト | VO は 1 クラス 1 ファイルで feature の domain に置く（`<entity>-<name>.ts`） | - | レビュー |
+| 値オブジェクト | VO は完全コンストラクタ: コンストラクタが毎回 `DomainValidation.validated` で自分のスキーマを検証し、検証後の値を持つ（値が 1 つなら `value`、複数の項目なら項目の名前）。不変（`readonly` と `Object.freeze`）で、等しさは `equals`（値で比べる）で判定する | どの口（生成・DB の行・application の入力）から作っても VO 型の値 = 規則を満たす値が成り立つ。DB から読み直した値は別のインスタンスなので `===` では比べない | レビュー |
+| 値オブジェクト | VO の規則の誤りのキーは VO が持ち（`<entity>.<field>.<reason>`）、Entity のスキーマは VO の項目を `z.instanceof(<VO>)` で確かめるだけで中身の規則を重ねない | 規則の正を VO の 1 か所にする。`z.instanceof` で、素の値を as で偽って渡したときも止める | レビュー |
+| 値オブジェクト | 規則を持たない boolean / Date（完了状態・作成日時など）は VO にしない | 包んでも守れる規則が無く、変換の手間だけが増える | レビュー |
+| 値オブジェクト | Entity・Repository の interface は VO を受け取る。application は入力の primitive から VO を作って domain に渡し、presentation は `.value` で primitive に戻して応答する | VO を作る場所を application にそろえ、presentation の応答の形（JSON）は変えない | レビュー |
+| 値オブジェクト | Repository の実装（Postgres・InMemory）は、変わった列の判定（`ChangedProps`）と変更の記録に、VO ではなく行の形（primitive）に戻した値を渡す | `ChangedProps` は値を参照で比べるので、VO のまま渡すと同じ値でも「変わった」になる | レビュー |
 
 ## ユースケースとトランザクション
 
@@ -204,7 +211,7 @@ paths:
 | 列の型 | JSON は `jsonb` で、`json` は使わない | `json` は処理のたびに解析し直す。`jsonb` は速くインデックスも張れる（公式の datatype-json） | `rule-tests/schema.test.ts` の `json` |
 | id と主キー | すべての表（子表・履歴表も）の列の定義の直下に `id: uuid("id").primaryKey()` を書く。複合主キーだけの表にせず、自然キー・複合キーは一意制約で表す。例外（`// WHY`）は認めない | どの行も id で指せ、変更履歴（`row_id` は uuid）・削除・参照が表によらず一様になる | `rule-tests/schema.test.ts` の `surrogate-key` |
 | id と主キー | `uuid("id")` は `drizzle-orm/pg-core` から import し、後ろのチェーンは `notNull` / `primaryKey` / `defaultRandom` / `default` / `$defaultFn` / `$default` / `unique` だけ。列の定義を変数・スプレッド・関数で渡さない | 検査は fail closed で、ほかの書き方は違反になる | `rule-tests/schema.test.ts` の `surrogate-key` |
-| id と主キー | id の形の検査は presentation の `ResourceId.parseUuid` だけで、Repository は検査しない（形の違う id は Postgres のエラーで 500） | Repository に来る形の違う id は呼び出し側の実装ミスで、「無い」として通すと誤りが隠れる | レビュー |
+| id と主キー | id の形は presentation の `ResourceId.parseUuid` と application が作る VO（`<Entity>Id`）が検査し、Repository は検査しない（型を偽って形の違う id を渡すと Postgres のエラーで 500） | Repository に来る形の違う id は呼び出し側の実装ミスで、「無い」として通すと誤りが隠れる | レビュー |
 | 子表 | 状態の遷移の履歴は insert のみの子表に積み、今の値は根の表に残す（一覧・詳細は根だけを読む）。Entity は履歴を古い順に持つ | - | レビュー |
 | 子表 | insert のみの表は `pgTable` の表名を `_changes` / `_events` / `_logs` で終え、`Changes` / `Events` / `Logs` で終わる変数で受ける | 次の行の検査が変数名で見分ける | `rule-tests/persistence.test.ts` の `append-only-table-naming` |
 | 子表 | insert のみの表の行は UPDATE / DELETE しない（消えるのは親を消したときの `on delete cascade` だけ） | - | `rule-tests/persistence.test.ts` の `no-update-delete-on-append-only-tables` |

@@ -1,6 +1,8 @@
 import type { TransactionRunner } from "../../../../shared/transaction/transaction";
 import type { Todo } from "../domain/todo";
+import { TodoId } from "../domain/todo-id";
 import type { TodoRepository } from "../domain/todo-repository";
+import { TodoTitle } from "../domain/todo-title";
 
 export type RenameTodoInput = {
   id: string;
@@ -22,10 +24,16 @@ export class RenameTodoCommand {
   async execute(input: RenameTodoInput): Promise<Todo> {
     return this.transactions.run(async (tx) => {
       // 無い id は findByIdForUpdate が not_found の DomainError を投げる（API で 404）。
-      const current = await this.repository.findByIdForUpdate(input.id, tx);
-      // title が不変条件を満たさなければ rename が validation_error を投げる。Todo は不変なので、update する前に
+      // WHY ここで TodoId を作る（Input は string のまま）: Input は presentation から届く値の形で、値オブジェクトにするのは domain に
+      //   渡す直前（Issue #423）。presentation の ResourceId.parseUuid が uuid の形を先に確かめる（違えば 404）ので、ここで
+      //   todo.id.invalid になるのは application を直接呼んだときだけ。
+      const current = await this.repository.findByIdForUpdate(
+        new TodoId(input.id),
+        tx,
+      );
+      // title が規則を満たさなければ TodoTitle のコンストラクタが validation_error を投げる。Todo は不変なので、update する前に
       //   投げれば保存済みの値は変わらない。
-      const renamed = current.rename(input.title);
+      const renamed = current.rename(new TodoTitle(input.title));
       await this.repository.update(renamed, tx);
       return renamed;
     });

@@ -6,7 +6,8 @@ import { RequestBody } from "../../../../shared/http/json-body";
 import { ProblemResponse } from "../../../../shared/http/problem";
 import { ResourceId } from "../../../../shared/http/resource-id";
 import { RenameTodoCommand } from "../application/rename-todo.command";
-import { TODO_TITLE_MAX_LENGTH, type Todo } from "../domain/todo";
+import type { Todo } from "../domain/todo";
+import { TODO_TITLE_MAX_LENGTH } from "../domain/todo-title";
 import { PostgresTodoRepository } from "../infra/todo-repository.postgres";
 
 // PUT /api/todos/:id/title: Todo の名前（title）を変える。無ければ 404。
@@ -69,7 +70,7 @@ export class RenameTodoApi {
   private renameTodoRequestSchema() {
     return RequestBody.schema({
       // 型が違う・無いときのキー（request.field.notString）は json-body.ts の toProblemError が決める（z.string に error は書かない）。
-      // trim してからコードポイント数（Array.from）で数える: todo.ts の todoPropsSchema の title と同じ（WHY はそちら）。
+      // trim してからコードポイント数（Array.from）で数える: todo-title.ts の TodoTitle の schema と同じ（WHY はそちら）。
       title: z
         .string()
         .trim()
@@ -88,8 +89,8 @@ export class RenameTodoApi {
 
   private toResponse(todo: Todo): RenameTodoResponse {
     return {
-      id: todo.id,
-      title: todo.title,
+      id: todo.id.value,
+      title: todo.title.value,
       completed: todo.completed,
       createdAt: todo.createdAt.toISOString(),
     };

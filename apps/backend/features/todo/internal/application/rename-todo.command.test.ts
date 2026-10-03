@@ -7,7 +7,12 @@ import {
   inMemoryTransaction,
 } from "../../../../test-support/transaction-runner.in-memory";
 import { Todo } from "../domain/todo";
+import { TodoTitle } from "../domain/todo-title";
 import { RenameTodoCommand } from "./rename-todo.command";
+
+// 無い Todo の id（uuid の形。presentation を通った id と同じく形は満たす。Issue #423 で id が TodoId になり、形を満たさない
+//   文字列は not_found より先に todo.id.invalid になるため）。
+const MISSING_ID = "00000000-0000-4000-8000-000000000000";
 
 // run の work が終わった（COMMIT した）ことを events に記録する runner（create-todo.command.test.ts と同じ）。
 function committingRunner(events: string[]): TransactionRunner {
@@ -22,7 +27,7 @@ function committingRunner(events: string[]): TransactionRunner {
 
 async function setup() {
   const repository = new InMemoryTodoRepository();
-  const todo = Todo.create("牛乳を買う");
+  const todo = Todo.create(new TodoTitle("牛乳を買う"));
   await repository.insert(todo, inMemoryTransaction);
   return {
     repository,
@@ -37,12 +42,15 @@ describe("RenameTodoCommand", () => {
     const { repository, todo, command } = await setup();
 
     // when
-    const renamed = await command.execute({ id: todo.id, title: "卵を買う" });
+    const renamed = await command.execute({
+      id: todo.id.value,
+      title: "卵を買う",
+    });
 
     // then
     expect(renamed).toMatchObject({
       id: todo.id,
-      title: "卵を買う",
+      title: { value: "卵を買う" },
       completed: false,
     });
     await expect(repository.findById(todo.id)).resolves.toEqual(renamed);
@@ -70,7 +78,7 @@ describe("RenameTodoCommand", () => {
     const renamed = await new RenameTodoCommand(
       repository,
       committingRunner(events),
-    ).execute({ id: todo.id, title: "卵を買う" });
+    ).execute({ id: todo.id.value, title: "卵を買う" });
 
     // then
     expect(find.mock.calls).toEqual([[todo.id, inMemoryTransaction]]);
@@ -83,13 +91,13 @@ describe("RenameTodoCommand", () => {
     const { command } = await setup();
 
     // when
-    const promise = command.execute({ id: "missing", title: "卵を買う" });
+    const promise = command.execute({ id: MISSING_ID, title: "卵を買う" });
 
     // then
     await expect(promise).rejects.toMatchObject({
       code: "not_found",
       key: "todo.notFound",
-      params: { id: "missing" },
+      params: { id: MISSING_ID },
     });
   });
 
@@ -98,7 +106,7 @@ describe("RenameTodoCommand", () => {
     const { repository, todo, command } = await setup();
 
     // when
-    const promise = command.execute({ id: todo.id, title: " " });
+    const promise = command.execute({ id: todo.id.value, title: " " });
 
     // then
     await expect(promise).rejects.toMatchObject({
