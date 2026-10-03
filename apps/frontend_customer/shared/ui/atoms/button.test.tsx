@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { activeTheme } from "@/shared/ui/active-theme";
 import { DesignSystem } from "@/test-support/design-system";
@@ -42,13 +43,15 @@ test("type に submit を渡すと、フォームの送信ボタンになる", (
   ).toBe("submit");
 });
 
-test("押すと onClick が引数なしで呼ばれる（画面はイベントを受け取らない）", () => {
+// 操作は user-event で行う（WHY は features/todo/screens/todo-screen/todo-screen.test.tsx の冒頭）。
+test("押すと onClick が引数なしで呼ばれる（画面はイベントを受け取らない）", async () => {
   // given
+  const user = userEvent.setup();
   const onClick = vi.fn();
   render(<Button onClick={onClick}>削除</Button>, { wrapper: DesignSystem });
 
   // when
-  fireEvent.click(screen.getByRole("button", { name: "削除" }));
+  await user.click(screen.getByRole("button", { name: "削除" }));
 
   // then
   expect(onClick).toHaveBeenCalledTimes(1);

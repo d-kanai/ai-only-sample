@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { activeTheme } from "@/shared/ui/active-theme";
 import { DesignSystem } from "@/test-support/design-system";
@@ -21,20 +22,23 @@ test("label を名前にした入力欄に value を出し、項目のエラー�
   expect(input.getAttribute("aria-invalid")).toBeNull();
 });
 
-test("入力すると、onChange が入力後の文字列で呼ばれる（画面はイベントを受け取らない）", () => {
+// 操作は user-event で行う（WHY は features/todo/screens/todo-screen/todo-screen.test.tsx の冒頭）。
+// WHY 貼り付け（paste）で入れる: value="" のまま（制御コンポーネントで親が値を変えない）なので、1 文字ずつ打つ type では
+//   onChange が 1 文字ずつ（"牛"・"乳"…）呼ばれる。貼り付けなら 1 回の入力で文字列全体が入る。
+test("入力すると、onChange が入力後の文字列で呼ばれる（画面はイベントを受け取らない）", async () => {
   // given
+  const user = userEvent.setup();
   const onChange = vi.fn();
   render(<TextInput label="タイトル" value="" onChange={onChange} />, {
     wrapper: DesignSystem,
   });
 
   // when
-  fireEvent.change(screen.getByRole("textbox", { name: "タイトル" }), {
-    target: { value: "牛乳を買う" },
-  });
+  await user.click(screen.getByRole("textbox", { name: "タイトル" }));
+  await user.paste("牛乳を買う");
 
   // then
-  expect(onChange).toHaveBeenCalledWith("牛乳を買う");
+  expect(onChange.mock.calls).toEqual([["牛乳を買う"]]);
 });
 
 test("error を渡すと入力の下に出し、aria-invalid と aria-describedby で入力と結び付ける（role=alert は付けない）", () => {

@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { activeTheme } from "@/shared/ui/active-theme";
 import { DesignSystem } from "@/test-support/design-system";
@@ -48,15 +49,16 @@ test.each([
   [true, false],
 ])(
   "checked が %s のときに押すと、onChange が切り替え後の値 %s で呼ばれる（画面はイベントを受け取らない）",
-  (checked, next) => {
+  async (checked, next) => {
     // given
+    const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Checkbox label="完了" checked={checked} onChange={onChange} />, {
       wrapper: DesignSystem,
     });
 
     // when
-    fireEvent.click(screen.getByRole("checkbox", { name: "完了" }));
+    await user.click(screen.getByRole("checkbox", { name: "完了" }));
 
     // then
     expect(onChange).toHaveBeenCalledWith(next);

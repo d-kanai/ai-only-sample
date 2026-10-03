@@ -1,24 +1,18 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { TodoDetailScreen } from "@/features/todo";
 import { ApiError } from "@/features/todo/api/api-error";
 import { TodoApi } from "@/features/todo/api/todo-api";
 import { commonMessages } from "@/shared/i18n/common.messages";
-import { LocaleProvider } from "@/shared/i18n/i18n";
-import { DesignSystem } from "@/test-support/design-system";
-import { JaLocale, tJa } from "@/test-support/i18n";
+import { EnLocale, JaLocale, tJa } from "@/test-support/i18n";
 import { todoDetailScreenMessages } from "./todo-detail-screen.messages";
 
 // 画面は「hook の状態を描き、操作を hook に渡す」ことを検証する。API は差し替え、操作の結果として呼ばれたかで見る。
 // 状態遷移の細かい仕様は todo-detail-screen.hook.test.ts で固定している。
 vi.mock("@/features/todo/api/todo-api");
 
+// 操作は user-event（userEvent.setup()）で行う（WHY は todo-screen.test.tsx の同じ箇所）。
 // globals 無効のため Testing Library の自動 cleanup が働かない。テストごとに DOM を片付ける。
 afterEach(cleanup);
 
@@ -67,24 +61,26 @@ test("エラーが無いときは alert を表示しない", async () => {
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-// fireEvent.submit は、ハンドラが preventDefault したときだけ false を返す（dispatchEvent の戻り値）。
+// submit のイベントを document で受け、既定の動作が止められたか（defaultPrevented）を見る（WHY は todo-screen.test.tsx の同じテスト）。
 test("title のフォームを送信しても、ブラウザの既定の送信（ページの再読み込み）はしない", async () => {
   // given
+  const user = userEvent.setup();
   vi.mocked(TodoApi.get).mockResolvedValue(milk);
   vi.mocked(TodoApi.rename).mockResolvedValue(milk);
   render(<TodoDetailScreen todoId={milk.id} />, { wrapper: JaLocale });
-  const form = (
-    await screen.findByRole("button", {
-      name: tJa(todoDetailScreenMessages, "save"),
-    })
-  ).closest("form");
-  if (form === null) throw new Error("保存ボタンが form の中にない");
+  const saveButton = await screen.findByRole("button", {
+    name: tJa(todoDetailScreenMessages, "save"),
+  });
+  const submitted: Event[] = [];
+  document.addEventListener("submit", (event) => submitted.push(event), {
+    once: true,
+  });
 
   // when
-  const notPrevented = fireEvent.submit(form);
+  await user.click(saveButton);
 
   // then
-  expect(notPrevented).toBe(false);
+  expect(submitted.map((event) => event.defaultPrevented)).toEqual([true]);
   // 送信で始まった保存（TodoApi.rename）の反映を待ってからテストを終える（終了後の state 更新を残さないため）。
   await waitFor(() =>
     expect(TodoApi.rename).toHaveBeenCalledWith("todo-1", "牛乳を買う"),
@@ -136,6 +132,7 @@ test("title を編集して保存ボタンを押すと、その title で更新�
   // given
   vi.mocked(TodoApi.get).mockResolvedValue(milk);
   vi.mocked(TodoApi.rename).mockResolvedValue({ ...milk, title: "豆乳を買う" });
+  const user = userEvent.setup();
   render(<TodoDetailScreen todoId={milk.id} />, { wrapper: JaLocale });
   const input = (await screen.findByRole("textbox", {
     name: tJa(todoDetailScreenMessages, "titleLabel"),
@@ -146,8 +143,9 @@ test("title を編集して保存ボタンを押すと、その title で更新�
   });
 
   // when
-  fireEvent.change(input, { target: { value: "豆乳を買う" } });
-  fireEvent.click(saveButton);
+  await user.clear(input);
+  await user.type(input, "豆乳を買う");
+  await user.click(saveButton);
 
   // then
   expect(initialValue).toBe("牛乳を買う");
@@ -164,13 +162,14 @@ test("完了チェックボックスを押すと、完了に更新されチェ�
     ...milk,
     completed: true,
   });
+  const user = userEvent.setup();
   render(<TodoDetailScreen todoId={milk.id} />, { wrapper: JaLocale });
   const checkbox = await screen.findByRole("checkbox", {
     name: tJa(todoDetailScreenMessages, "completed"),
   });
 
   // when
-  fireEvent.click(checkbox);
+  await user.click(checkbox);
 
   // then
   await waitFor(() =>
@@ -191,12 +190,7 @@ test("LocaleProvider のロケールが en なら、英語の文言で表示す�
   vi.mocked(TodoApi.get).mockResolvedValue(milk);
 
   // when
-  render(
-    <LocaleProvider locale="en">
-      <TodoDetailScreen todoId={milk.id} />
-    </LocaleProvider>,
-    { wrapper: DesignSystem },
-  );
+  render(<TodoDetailScreen todoId={milk.id} />, { wrapper: EnLocale });
 
   // then
   expect(screen.getByText("Loading…")).toBeDefined();
@@ -211,8 +205,9 @@ test("LocaleProvider のロケールが en なら、英語の文言で表示す�
 async function saveTitleWithFailure(reason: unknown) {
   vi.mocked(TodoApi.get).mockResolvedValue(milk);
   vi.mocked(TodoApi.rename).mockRejectedValue(reason);
+  const user = userEvent.setup();
   render(<TodoDetailScreen todoId={milk.id} />, { wrapper: JaLocale });
-  fireEvent.click(
+  await user.click(
     await screen.findByRole("button", {
       name: tJa(todoDetailScreenMessages, "save"),
     }),

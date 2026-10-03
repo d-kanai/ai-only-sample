@@ -25,7 +25,7 @@ import { todoScreenMessages } from "./todo-screen.messages";
 //   export しない部品に閉じる。形は rule-tests/screen-outline.test.ts が検査する。
 // 見た目はデザインシステムの atom（shared/ui/atoms/）を置くだけで、色・余白・部品の形はテーマ（shared/ui/themes/）に書く（Issue #292）。
 // "use client": データは hook から /api/todos を fetch して取る（SSR を前提にしない構成）ため、
-// useState / useEffect とイベントハンドラを使うクライアントコンポーネントにする。
+// hook（TanStack Query・react-hook-form）とイベントハンドラを使うクライアントコンポーネントにする。
 // 文言はすべて隣の辞書（todo-screen.messages.ts）のキーで t から出す（.claude/rules/code/frontend.md の「i18n」）。
 export function TodoScreen() {
   const {
@@ -164,7 +164,8 @@ function TodoItem({
   const locale = useLocale();
   // 作成日時はブラウザ（利用者）のタイムゾーンで出す。サーバは UTC で動く（package.json の TZ=UTC）ので、サーバで決めると
   // 利用者の時刻とずれる。
-  // WHY 描画の中で読んでよい（hydration の不一致にならない）: 一覧は hook が useEffect の中で取得してから描くので、
+  // WHY 描画の中で読んでよい（hydration の不一致にならない）: 一覧は hook が mount の後にブラウザで取得してから描くので
+  //   （TanStack Query の useQuery。サーバの描画では一覧がまだ無く、読み込み中を描く）、
   //   この部品はサーバの prerender・SSR では描かれず、ブラウザでだけ描かれる（.claude/rules/code/frontend.md の「データ取得とレンダリング」の表の「prerender」）。
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return (
