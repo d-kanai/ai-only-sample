@@ -14,7 +14,7 @@ AI（Claude Code）が Issue → ブランチ → PR → マージ の流れで�
 | フレームワーク | [Next.js](https://nextjs.org/) | App Router |
 | UI | [React](https://react.dev/) + [Mantine](https://mantine.dev/) | Mantine を直接使うのは `shared/ui` だけ（`.claude/rules/code/frontend.md`） |
 | フィーチャーフラグ | [OpenFeature](https://openfeature.dev/)（OFREP） | フラグの値は backend に固定で持つ（ADR `docs/adr/architecture/20261002-feature-flag-ofrep-hardcoded.md`） |
-| 入力の検証 | [zod](https://zod.dev/) | backend と環境変数の検証 |
+| 入力の検証 | [zod](https://zod.dev/) | backend の入力・環境変数・ログの形の検証 |
 | データベース | [PostgreSQL](https://www.postgresql.org/) | 18。アプリは常に Postgres（InMemory のリポジトリはテスト用） |
 | ORM / マイグレーション | [Drizzle ORM](https://orm.drizzle.team/) + drizzle-kit | 生成した SQL でマイグレーションする（スキル `db-migration`） |
 | DB ドライバ | [node-postgres（pg）](https://node-postgres.com/) | |
@@ -84,17 +84,17 @@ AI（Claude Code）が Issue → ブランチ → PR → マージ の流れで�
 
 ## ディレクトリ構成
 
-機能（feature）単位で置く。画面側（Next.js）を `apps/frontend_customer/`、API 側（Next・React に依存しない TypeScript）を `apps/backend/` に分け、それぞれ pnpm workspace のパッケージ（`@repo/frontend-customer` / `@repo/backend`）にする（Issue #68。プロセスは Next 1 つのまま）。両方が使う環境変数の入口とログの出口は `apps/shared/`（`@repo/shared`。Issue #90）に置く。`src/` は使わない（例は Todo）。
+機能（feature）単位で置く。画面側（Next.js）を `apps/frontend_customer/`、API 側（Next・React に依存しない TypeScript）を `apps/backend/` に分け、それぞれ pnpm workspace のパッケージ（`@repo/frontend-customer` / `@repo/backend`）にする（Issue #68。プロセスは Next 1 つのまま）。両方が使う環境変数の入口・ログの出口・現在時刻の出口は `apps/shared/`（`@repo/shared`。Issue #90）に置く。`src/` は使わない（例は Todo）。
 
 ```
 apps/
   frontend_customer/  # @repo/frontend-customer。Next.js（app/ はルーティングだけ、features/<feature>/ に画面、shared/ に共通部品）
   backend/            # @repo/backend。API 側（features/<feature>/ が 1 モジュールで internal/ と、他のモジュールに公開するときだけ expose/、shared/ に共通部品、spec/ に API の仕様とジャーニー、test-support/ にテストの土台）
-  shared/             # @repo/shared。frontend と backend で共通の基盤（env・logger）だけ
+  shared/             # @repo/shared。frontend と backend で共通の基盤（env・logger・now）だけ
   e2e/                # @repo/e2e。E2E（spec/ に .feature と step、support/ に土台）
-rule-tests/           # ルール検査テスト（.feature と .test.ts の対）
+rule-tests/           # ルール検査テスト（.feature と .test.ts の対と、共通の補助）
 infra/                # Terraform（GCP）
-scripts/              # クラウドセッション・フック・セキュリティの検査のスクリプト
+scripts/              # クラウドセッション・フック・セキュリティの検査・worktree・構成図の描画のスクリプト
 docs/                 # ADR（adr/）・作業ログ（work-logs/）・構成図（diagrams/）
 ```
 
@@ -128,10 +128,10 @@ cp .env.example .env
 
 ```sh
 pnpm db:up       # Postgres を起動し、healthcheck が通るまで待つ（docker compose up -d --wait）
-pnpm db:migrate  # apps/backend/shared/drizzle/ のマイグレーションを当てる（入口 migrate.ts を esbuild で束ねて実行。Cloud Run の migrate ジョブと同じファイル。当て済みのものは飛ばす）
+pnpm db:migrate  # apps/backend/shared/drizzle/migrations/ のマイグレーションを当てる（入口 migrate.ts を esbuild で束ねて実行。Cloud Run の migrate ジョブと同じファイル。当て済みのものは飛ばす）
 pnpm db:psql     # psql で接続する（docker compose exec db psql -U app -d app）
 pnpm db:down     # 止める（データは名前付きボリューム pgdata に残る。消すときは docker compose down -v）
-pnpm db:generate # apps/backend/features/*/internal/infra/schema.ts を変えたら、差分の SQL を apps/backend/shared/drizzle/ に生成する（drizzle-kit generate。DB には接続しない）
+pnpm db:generate # スキーマ（apps/backend/features/*/internal/infra/schema.ts と apps/backend/shared/ の *.schema.ts）を変えたら、差分の SQL を apps/backend/shared/drizzle/migrations/ に生成する（drizzle-kit generate。DB には接続しない）
 ```
 
 - 接続先は `.env` の `DATABASE_URL`（`.env.example` の値は `postgresql://app:app@localhost:5432/app`。開発用の固定値で秘密ではない）。アプリは常に Postgres を使うので、`pnpm dev` の前にも `pnpm db:up` と `pnpm db:migrate` が要る。
@@ -158,14 +158,14 @@ pnpm build     # 本番ビルド（pnpm --filter @repo/frontend-customer build�
 pnpm start     # 本番ビルドを起動（pnpm --filter @repo/frontend-customer start）
 ```
 
-- コマンドはリポジトリ直下で実行する。`dev` / `build` / `start` は `apps/frontend_customer`、`db:generate` は `apps/backend` の script を `pnpm --filter` で呼ぶ。`db:migrate` はリポジトリ直下の script で、`apps/backend/shared/drizzle/migrate.ts` を esbuild で `dist/migrate/` に束ねて実行する（Issue #326）（そのパッケージのディレクトリで動くが、`.env` はリポジトリ直下の 1 つを読む）。依存の追加は `pnpm --filter @repo/backend add <pkg>@<x.y.z>` のように置き場所のパッケージを指定する（`.claude/rules/tooling/dependencies.md`）。
+- コマンドはリポジトリ直下で実行する。`dev` / `build` / `start` は `apps/frontend_customer`、`db:generate` は `apps/backend` の script を `pnpm --filter` で呼ぶ（そのパッケージのディレクトリで動くが、`.env` はリポジトリ直下の 1 つを読む）。`db:migrate` はリポジトリ直下の script で、`apps/backend/shared/drizzle/migrate.ts` を esbuild で `dist/migrate/` に束ねて実行する（Issue #326）。依存の追加は `pnpm --filter @repo/backend add <pkg>@<x.y.z>` のように置き場所のパッケージを指定する（`.claude/rules/tooling/dependencies.md`）。
 
 - どのコマンドも `.env` がある前提（上の「セットアップ」）。
 - `pnpm dev` は Postgres の起動とマイグレーションが前提（先に `pnpm db:up && pnpm db:migrate`）。
 - `pnpm test` / `pnpm test:unit` / `pnpm test:mutation` は Postgres が起動している前提（先に `pnpm db:up`）。Postgres を使うテストは、テストファイルごとに別のスキーマを作ってマイグレーションを当てるので、`pnpm db:migrate` は不要で、`pnpm dev` のデータも消さない。前の実行が残したテスト用のスキーマは、実行の最初に消す（Postgres に接続できなければそこで止まる）。
-- `pnpm test:e2e` は Postgres の起動とマイグレーションが前提（先に `pnpm db:up && pnpm db:migrate`）。各テストの前に `todos` を空にする（`pnpm dev` と同じ DB を使うので、開発中のデータも消える）。
+- `pnpm test:e2e` は Postgres の起動とマイグレーションが前提（先に `pnpm db:up && pnpm db:migrate`）。各テストの前に `todos`・`todo_status_changes`・`change_logs` を空にする（`pnpm dev` と同じ DB を使うので、開発中のデータも消える）。
 
-`pnpm install` で pre-commit フック（Lefthook）も入り、コミット時にステージ済みファイルが Biome で検査される。詳細は `.claude/rules/quality/lint.md` を参照。
+`pnpm install` で Git フック（Lefthook の pre-commit・pre-push・commit-msg）も入り、上の「品質ツール」の表のとおりに検査する。
 
 ## デプロイ
 
