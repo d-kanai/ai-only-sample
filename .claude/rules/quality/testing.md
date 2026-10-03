@@ -27,19 +27,19 @@ paths:
 ## 置き方と環境
 対象と同じディレクトリに `<対象>.test.ts(x)` で置く（`apps/frontend_customer/app/` には置かない）。E2E だけ workspace パッケージ `@repo/e2e` の `apps/e2e/spec/<name>.feature` と step の `apps/e2e/spec/<name>.steps.ts`（画面・API・ルーティングをまたぐため。下の「E2E」）。
 
-| 対象 | 方法 | 環境 |
-| --- | --- | --- |
-| `apps/backend/**/domain` | 純粋な単体テスト | Node |
-| `apps/shared/`（`env.ts`・`logger.ts`・`now.ts`） | 純粋な単体テスト（一時ディレクトリの `.env`、`console` の spy、`Clock.now` の `vi.mock`） | Node |
-| `apps/backend/**/application` | InMemory リポジトリ（`apps/backend/test-support/<feature>/*.in-memory.ts`）を渡して検証 | Node |
-| `apps/backend/**/infra` の Postgres の実装（`*.postgres.ts`・`database.ts`） | 実 Postgres。`TestDatabase.create()` でファイルごとの別スキーマ（`test_<UUID>`）にマイグレーションを当て、各テストの前に `TRUNCATE` | Node |
-| `apps/backend/spec/journey/*.api-journey.test.ts`（API ジャーニー。対の Gherkin の `<name>.feature` の step の実装。下の「API ジャーニーテスト」） | 実 Postgres（`TestDatabase.create()`）の db で本番と同じに組み立てた複数の handler に、業務の流れの順に `new Request()` を渡し、応答と（変更系の後は）DB の行で確かめる | Node |
-| `apps/backend/spec/api/<feature>/<api>.api-spec.test.ts`（API 仕様。対の `<api>.feature` の `*` の step の実装。下の「API 仕様テスト（spec/api）」） | 実 Postgres（`TestDatabase.create()`）の db で本番と同じに組み立てた handler に `new Request()` を渡し、`*` の step ごとに前提から応答と DB の行まで確かめる | Node |
-| `apps/backend/spec/domain/<feature>/<name>.domain-spec.test.ts`（domain 仕様。対の `<name>.feature` の `*` の step の実装。下の「domain 仕様（spec/domain）」） | domain の Entity を直接呼び、`*` の step ごとに前提から結果（拒否の理由を含む）まで確かめる。時計は `Clock.now` の `vi.mock` | Node |
-| `apps/backend/**/presentation` | 空の InMemory（`apps/backend/test-support/<feature>/`）で組み立てた handler（`new ListTodosApi(new ListTodosQuery(new InMemoryTodoRepository())).handle`）に `new Request()`（と `ctx`）を渡し、`Response` を検証。本番の handler（`export const GET` など）は、Postgres の Repository の prototype を spy して結線だけを確かめる | Node |
-| `apps/frontend_customer/features/**/*.hook.ts` | `renderHook` で状態とイベント | jsdom |
-| `apps/frontend_customer/features/**/*-screen.tsx` | render して操作し、表示を検証 | jsdom |
-| `apps/e2e/spec/*.feature` と `*.steps.ts`（E2E。playwright-bdd が Playwright のテストを生成する） | Playwright で本番ビルドを起動し、Chromium で操作 | Chromium |
+| カテゴリ | 対象 | 方法 | 環境 |
+| --- | --- | --- | --- |
+| Backend UT | `apps/backend/**/domain` | 純粋な単体テスト | Node |
+| Backend UT | `apps/backend/**/application` | InMemory リポジトリ（`apps/backend/test-support/<feature>/*.in-memory.ts`）を渡して検証 | Node |
+| Backend UT | `apps/backend/**/infra` の Postgres の実装（`*.postgres.ts`・`database.ts`） | 実 Postgres。`TestDatabase.create()` でファイルごとの別スキーマ（`test_<UUID>`）にマイグレーションを当て、各テストの前に `TRUNCATE` | Node |
+| Backend UT | `apps/backend/**/presentation` | 空の InMemory（`apps/backend/test-support/<feature>/`）で組み立てた handler（`new ListTodosApi(new ListTodosQuery(new InMemoryTodoRepository())).handle`）に `new Request()`（と `ctx`）を渡し、`Response` を検証。本番の handler（`export const GET` など）は、Postgres の Repository の prototype を spy して結線だけを確かめる | Node |
+| Backend 仕様 | `apps/backend/spec/domain/<feature>/<name>.domain-spec.test.ts`（domain 仕様。対の `<name>.feature` の `*` の step の実装。下の「domain 仕様（spec/domain）」） | domain の Entity を直接呼び、`*` の step ごとに前提から結果（拒否の理由を含む）まで確かめる。時計は `Clock.now` の `vi.mock` | Node |
+| Backend 仕様 | `apps/backend/spec/api/<feature>/<api>.api-spec.test.ts`（API 仕様。対の `<api>.feature` の `*` の step の実装。下の「API 仕様テスト（spec/api）」） | 実 Postgres（`TestDatabase.create()`）の db で本番と同じに組み立てた handler に `new Request()` を渡し、`*` の step ごとに前提から応答と DB の行まで確かめる | Node |
+| Backend ジャーニー | `apps/backend/spec/journey/*.api-journey.test.ts`（API ジャーニー。対の Gherkin の `<name>.feature` の step の実装。下の「API ジャーニーテスト」） | 実 Postgres（`TestDatabase.create()`）の db で本番と同じに組み立てた複数の handler に、業務の流れの順に `new Request()` を渡し、応答と（変更系の後は）DB の行で確かめる | Node |
+| Shared UT | `apps/shared/`（`env.ts`・`logger.ts`・`now.ts`） | 純粋な単体テスト（一時ディレクトリの `.env`、`console` の spy、`Clock.now` の `vi.mock`） | Node |
+| Frontend UT | `apps/frontend_customer/features/**/*.hook.ts` | `renderHook` で状態とイベント | jsdom |
+| Frontend UT | `apps/frontend_customer/features/**/*-screen.tsx` | render して操作し、表示を検証 | jsdom |
+| E2E | `apps/e2e/spec/*.feature` と `*.steps.ts`（E2E。playwright-bdd が Playwright のテストを生成する） | Playwright で本番ビルドを起動し、Chromium で操作 | Chromium |
 
 - `apps/backend/`・`apps/shared/` のテストは先頭に `// @vitest-environment node`（既定は jsdom）。WHY: サーバのコードは DOM の無い環境で検証する。
 - 実 Postgres を別スキーマに分ける WHY: Vitest はファイルを並列に、Stryker はさらに複数プロセスで実行する。同じ `public.todos` を使うと互いの `TRUNCATE` でデータが消え、`pnpm dev` や E2E の表も消える。drizzle の migrator には同時実行の排他が無い（drizzle-orm 0.45.3 の `pg-core/dialect.js` の `migrate` を読んで確認）。
