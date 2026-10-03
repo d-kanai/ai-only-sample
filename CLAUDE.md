@@ -41,11 +41,12 @@
 @LEARNINGS.md
 
 ## 常時のルール（要点）
-`.claude/rules/workflow/` の 4 つは `paths` を持たないので、起動時に自動で読み込まれる（`@` で読まない）。
+`.claude/rules/workflow/` の 5 つは `paths` を持たないので、起動時に自動で読み込まれる（`@` で読まない）。
 - オーケストレーション: `.claude/rules/workflow/orchestration.md`
 - Issue → ブランチ → PR → マージ: `.claude/rules/workflow/issue-pr.md`
 - コミットメッセージ: `.claude/rules/workflow/commit.md`
 - 作業ログ: `.claude/rules/workflow/work-log.md`
+- ドメイン機能の開発（4 種の .feature → 整合性の確認 → TDD）: `.claude/rules/workflow/feature-dev.md`
 
 ## 指示ファイルの置き場所
 常時読み込むのはこのファイル・LEARNINGS.md・`.claude/rules/workflow/` だけにし、ほかは必要なときだけ読まれる形に分けている（WHY と公式の仕様は ADR `docs/adr/workflow/20260928-instruction-files-by-load-timing.md` と、rules への統合の `docs/adr/workflow/20261002-always-loaded-rules-in-rules-workflow.md`、実測は 2026-09-29 の work-logs。構成は `rule-tests/instructions.test.ts` が検査する）。
