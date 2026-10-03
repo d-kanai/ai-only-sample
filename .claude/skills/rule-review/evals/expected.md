@@ -8,7 +8,7 @@
 ## 期待
 | patch | 期待する指摘 | 根拠の観点（行は変わりうるので WHAT で探す） |
 | --- | --- | --- |
-| `backend-violations.patch` | 🔴 2 件: (1) `change-todo-completion.command.ts` の通知の本文に title を入れた (2) `notification/expose/notifier.ts` が internal の `SendNotificationCommand` を再公開した | backend.md「本文は id だけの英語（`Todo completed: <id>`）。title などの利用者の値を入れない」、backend.md「`expose/` が公開するのは `expose/` に書いたクラス…と型にとどめ、internal の実装のクラスをそのまま公開しない」 |
+| `backend-violations.patch` | 🔴 2 件: (1) `change-todo-completion.command.ts` の通知の本文に title を入れた (2) `notification/expose/notifier.ts` が internal の `SendNotificationCommand` を再公開した | backend.md「通知などの本文は id など決まった形の英語だけにし、利用者の入力（自由な値）を入れない」、backend.md「`expose/` が公開するのは `expose/` に書いたクラス…と型にとどめ、internal の実装のクラスをそのまま公開しない」 |
 | `frontend-violations.patch` | 🔴 2 件: (1) atom `Button` の props に Mantine の props 型（`variant`）を通した (2) `onClick` がマウスのイベントを渡す | frontend.md「atom を足す・変えるとき: props は画面が要るものだけを自前の型で出し（Mantine の props 型を渡さない）、イベントは文字列・boolean・引数なしで渡す」（1 行に 2 つの規範。1 件にまとめてもよい） |
 | `clean.patch` | 指摘なし（atom `Button` の変数名を変えただけ） | - |
 
