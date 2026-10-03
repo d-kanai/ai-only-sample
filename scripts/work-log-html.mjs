@@ -260,20 +260,24 @@ export function buildHtml(days) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>作業ログ</title>
 <style>
-body { font-family: system-ui, sans-serif; line-height: 1.6; margin: 0 auto; max-width: 960px; padding: 16px; color: #1f2328; background: #fff; }
-nav { display: flex; flex-wrap: wrap; gap: 8px; position: sticky; top: 0; background: #fff; padding: 8px 0; border-bottom: 1px solid #d0d7de; }
-h2 { border-bottom: 2px solid #d0d7de; margin-top: 32px; }
+/* 読むための 1 列。日付の目次を上に固定し、ファイルごとの節を枠で区切る。 */
+:root { --bg: #fbfbfa; --fg: #1d2127; --muted: #5d6673; --line: #d5d9de; --surface: #ffffff; --code: #eef1f4; --accent: #2457a6; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #111418; --fg: #e3e7ec; --muted: #9aa4b1; --line: #2c333c; --surface: #171b21; --code: #20262e; --accent: #7fa8e8; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #111418; --fg: #e3e7ec; --muted: #9aa4b1; --line: #2c333c; --surface: #171b21; --code: #20262e; --accent: #7fa8e8; color-scheme: dark; }
+body { font-family: system-ui, sans-serif; font-size: 15px; line-height: 1.7; margin: 0 auto; max-width: 72ch; padding-block: 16px; padding-inline: 16px; color: var(--fg); background: var(--bg); }
+a { color: var(--accent); overflow-wrap: anywhere; }
+nav { display: flex; flex-wrap: wrap; gap: 4px 12px; position: sticky; top: env(safe-area-inset-top, 0px); background: var(--bg); padding-block: 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+h1 { font-size: 1.4rem; margin: 0 0 8px; }
+h2 { font-size: 1.2rem; border-bottom: 2px solid var(--line); margin: 32px 0 0; font-variant-numeric: tabular-nums; }
+h3, h4, h5 { text-wrap: balance; line-height: 1.4; }
 section { scroll-margin-top: 96px; }
-article { border: 1px solid #d0d7de; border-radius: 8px; padding: 0 16px 8px; margin: 16px 0; }
-.file { color: #59636e; font-size: 0.85em; margin: 8px 0 0; }
-code, pre { background: #f6f8fa; border-radius: 4px; font-size: 0.9em; }
-code { padding: 0 4px; }
+article { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 0 16px 8px; margin: 16px 0; min-width: 0; }
+.file { color: var(--muted); font-size: 0.8rem; letter-spacing: 0.02em; margin: 8px 0 0; }
+code, pre { background: var(--code); border-radius: 4px; font-size: 0.88em; }
+code { padding: 0 4px; overflow-wrap: anywhere; }
 pre { overflow-x: auto; padding: 8px; }
-@media (prefers-color-scheme: dark) {
-  body, nav { color: #e6edf3; background: #0d1117; }
-  code, pre { background: #161b22; }
-  a { color: #4493f8; }
-}
+pre code { padding: 0; overflow-wrap: normal; }
+ul { padding-left: 1.25em; }
 </style>
 </head>
 <body>
