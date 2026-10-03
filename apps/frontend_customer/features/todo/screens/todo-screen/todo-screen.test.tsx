@@ -1,19 +1,12 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { useFeatureFlag } from "@/features/feature-flag";
 import { TodoScreen } from "@/features/todo";
 import { ApiError } from "@/features/todo/api/api-error";
 import { TodoApi } from "@/features/todo/api/todo-api";
 import { commonMessages } from "@/shared/i18n/common.messages";
-import { LocaleProvider } from "@/shared/i18n/i18n";
-import { DesignSystem } from "@/test-support/design-system";
-import { JaLocale, tJa } from "@/test-support/i18n";
+import { EnLocale, JaLocale, tJa } from "@/test-support/i18n";
 import { todoScreenMessages } from "./todo-screen.messages";
 
 // 画面は「hook の状態を描き、操作を hook に渡す」ことを検証する。API は差し替え、操作の結果として呼ばれたかで見る。
@@ -22,6 +15,9 @@ vi.mock("@/features/todo/api/todo-api");
 // フィーチャーフラグ（Issue #156）は feature-flag feature の公開 API（index）で差し替える（WHY は todo-screen.hook.test.ts の同じ箇所）。
 vi.mock("@/features/feature-flag");
 
+// 操作は user-event（userEvent.setup()）で行う（Issue #449）。
+// WHY fireEvent にしない: fireEvent はイベントを 1 つ送るだけで、実際の操作（クリックの前の pointer・focus、1 文字ずつの入力）を
+//   再現しない。user-event は利用者の操作の順にイベントを送るので、画面が実際の操作で動くことを見られる（Testing Library の推奨）。
 // globals 無効のため Testing Library の自動 cleanup が働かない。テストごとに DOM を片付ける。
 afterEach(cleanup);
 
@@ -81,22 +77,29 @@ test("エラーが無いときは alert を表示しない", async () => {
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-// fireEvent.submit は、ハンドラが preventDefault したときだけ false を返す（dispatchEvent の戻り値）。
+// submit のイベントを document で受け、既定の動作が止められたか（defaultPrevented）を見る。
+// WHY document で受ける: React は画面のハンドラを描いた根の要素で受ける（イベントの委譲）ので、その先の document に届いた時点で
+//   画面のハンドラ（atom の Form の preventDefault）は動き終わっている。
 test("追加のフォームを送信しても、ブラウザの既定の送信（ページの再読み込み）はしない", async () => {
   // given
+  const user = userEvent.setup();
   vi.mocked(TodoApi.list).mockResolvedValue({ todos: [] });
   render(<TodoScreen />, { wrapper: JaLocale });
   await screen.findByRole("list");
-  const form = screen
-    .getByRole("button", { name: tJa(todoScreenMessages, "form.submit") })
-    .closest("form");
-  if (form === null) throw new Error("追加ボタンが form の中にない");
+  const submitted: Event[] = [];
+  document.addEventListener("submit", (event) => submitted.push(event), {
+    once: true,
+  });
 
   // when
-  const notPrevented = fireEvent.submit(form);
+  await user.click(
+    screen.getByRole("button", {
+      name: tJa(todoScreenMessages, "form.submit"),
+    }),
+  );
 
   // then
-  expect(notPrevented).toBe(false);
+  expect(submitted.map((event) => event.defaultPrevented)).toEqual([true]);
 });
 
 test("一覧の取得に失敗すると、エラーのキーを翻訳した文言が alert として表示される", async () => {
@@ -124,12 +127,7 @@ test("LocaleProvider のロケールが en なら、英語の文言で表示す�
   vi.mocked(TodoApi.list).mockResolvedValue({ todos: [] });
 
   // when
-  render(
-    <LocaleProvider locale="en">
-      <TodoScreen />
-    </LocaleProvider>,
-    { wrapper: DesignSystem },
-  );
+  render(<TodoScreen />, { wrapper: EnLocale });
 
   // then
   expect(screen.getByText("Loading…")).toBeDefined();
@@ -223,12 +221,7 @@ test("LocaleProvider のロケールが en なら、一覧の行も英語の文�
   vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
 
   // when
-  render(
-    <LocaleProvider locale="en">
-      <TodoScreen />
-    </LocaleProvider>,
-    { wrapper: DesignSystem },
-  );
+  render(<TodoScreen />, { wrapper: EnLocale });
 
   // then
   expect(
@@ -248,6 +241,7 @@ test("title を入力して追加ボタンを押すと、その title で作成�
     .mockResolvedValueOnce({ todos: [] })
     .mockResolvedValueOnce({ todos: [milk] });
   vi.mocked(TodoApi.create).mockResolvedValue(milk);
+  const user = userEvent.setup();
   render(<TodoScreen />, { wrapper: JaLocale });
   await screen.findByRole("list");
   const titleInput = screen.getByRole("textbox", {
@@ -258,10 +252,8 @@ test("title を入力して追加ボタンを押すと、その title で作成�
   });
 
   // when
-  fireEvent.change(titleInput, {
-    target: { value: "牛乳を買う" },
-  });
-  fireEvent.click(submitButton);
+  await user.type(titleInput, "牛乳を買う");
+  await user.click(submitButton);
 
   // then
   expect(await screen.findByRole("link", { name: "牛乳を買う" })).toBeDefined();
@@ -284,13 +276,14 @@ test("完了チェックボックスを押すと、その Todo が完了に更�
     ...milk,
     completed: true,
   });
+  const user = userEvent.setup();
   render(<TodoScreen />, { wrapper: JaLocale });
   const checkbox = await screen.findByRole("checkbox", {
     name: tJa(todoScreenMessages, "toggle", { title: "牛乳を買う" }),
   });
 
   // when
-  fireEvent.click(checkbox);
+  await user.click(checkbox);
 
   // then
   expect(
@@ -308,13 +301,14 @@ test("削除ボタンを押すと、その Todo が削除され一覧から消�
     .mockResolvedValueOnce({ todos: [milk] })
     .mockResolvedValueOnce({ todos: [] });
   vi.mocked(TodoApi.delete).mockResolvedValue(undefined);
+  const user = userEvent.setup();
   render(<TodoScreen />, { wrapper: JaLocale });
   const deleteButton = await screen.findByRole("button", {
     name: tJa(todoScreenMessages, "deleteAria", { title: "牛乳を買う" }),
   });
 
   // when
-  fireEvent.click(deleteButton);
+  await user.click(deleteButton);
 
   // then
   // 削除後の再取得が反映されるまで待つ。
@@ -329,15 +323,16 @@ test("削除ボタンを押すと、その Todo が削除され一覧から消�
 async function submitTitleWithFailure(reason: unknown) {
   vi.mocked(TodoApi.list).mockResolvedValue({ todos: [] });
   vi.mocked(TodoApi.create).mockRejectedValue(reason);
+  const user = userEvent.setup();
   render(<TodoScreen />, { wrapper: JaLocale });
   await screen.findByRole("list");
-  fireEvent.change(
+  await user.type(
     screen.getByRole("textbox", {
       name: tJa(todoScreenMessages, "form.newTitle"),
     }),
-    { target: { value: "牛乳を買う" } },
+    "牛乳を買う",
   );
-  fireEvent.click(
+  await user.click(
     screen.getByRole("button", {
       name: tJa(todoScreenMessages, "form.submit"),
     }),

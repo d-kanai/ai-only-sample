@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { activeTheme } from "@/shared/ui/active-theme";
 import { DesignSystem } from "@/test-support/design-system";
@@ -7,8 +8,13 @@ import { Form } from "./form";
 // Vitest は globals を無効にしているため、Testing Library の自動 cleanup が働かない。前のテストの DOM を明示的に消す。
 afterEach(cleanup);
 
-test("送信すると、ページの遷移（既定の動作）を止めて onSubmit を引数なしで呼ぶ", () => {
+// 操作は user-event で行う（WHY は features/todo/screens/todo-screen/todo-screen.test.tsx の冒頭）。
+// submit のイベントを document で受け、既定の動作が止められたか（defaultPrevented）を見る。
+// WHY document で受ける: React はハンドラを描いた根の要素で受ける（イベントの委譲）ので、document に届いた時点で
+//   Form の onSubmit（preventDefault）は動き終わっている。
+test("送信すると、ページの遷移（既定の動作）を止めて onSubmit を引数なしで呼ぶ", async () => {
   // given
+  const user = userEvent.setup();
   const onSubmit = vi.fn();
   render(
     <Form onSubmit={onSubmit}>
@@ -16,14 +22,16 @@ test("送信すると、ページの遷移（既定の動作）を止めて onSu
     </Form>,
     { wrapper: DesignSystem },
   );
-  const form = screen.getByRole("button", { name: "送信" }).closest("form");
+  const submitted: Event[] = [];
+  document.addEventListener("submit", (event) => submitted.push(event), {
+    once: true,
+  });
 
   // when
-  // fireEvent は、ハンドラが preventDefault を呼ぶと false を返す（dispatchEvent の戻り値）。
-  const notPrevented = fireEvent.submit(form as HTMLFormElement);
+  await user.click(screen.getByRole("button", { name: "送信" }));
 
   // then
-  expect(notPrevented).toBe(false);
+  expect(submitted.map((event) => event.defaultPrevented)).toEqual([true]);
   expect(onSubmit).toHaveBeenCalledTimes(1);
   expect(onSubmit).toHaveBeenCalledWith();
 });

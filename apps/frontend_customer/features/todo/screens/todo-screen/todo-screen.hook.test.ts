@@ -1,19 +1,12 @@
-import {
-  act,
-  cleanup,
-  render,
-  renderHook,
-  waitFor,
-} from "@testing-library/react";
-import { Activity, type ActivityProps, createElement, StrictMode } from "react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { useFeatureFlag } from "@/features/feature-flag";
 import { ApiError } from "@/features/todo/api/api-error";
 import { TodoApi } from "@/features/todo/api/todo-api";
 import { useTodoScreen } from "@/features/todo/screens/todo-screen/todo-screen.hook";
 import { commonMessages } from "@/shared/i18n/common.messages";
-import { formatMessage, LocaleProvider } from "@/shared/i18n/i18n";
-import { JaLocale, tJa } from "@/test-support/i18n";
+import { formatMessage } from "@/shared/i18n/i18n";
+import { EnLocale, JaLocale, tJa } from "@/test-support/i18n";
 
 // hook の関心は「いつ・何で API を呼び、結果をどの状態に反映するか」なので、HTTP の詳細（todo-api.test.ts で検証済み）は差し替える。
 vi.mock("@/features/todo/api/todo-api");
@@ -59,6 +52,22 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+// act の中で操作を行い、TanStack Query の知らせまで描画に反映してから返す。
+// WHY: TanStack Query はキャッシュの変化を setTimeout(0) で hook に知らせる（query-core 5.104.0 の notifyManager の既定。
+//   hook の購読は notifyManager.batchCalls）。操作の Promise が終わった時点では知らせがまだ届いておらず、act だけでは前の値のまま見える。
+//   値が変わらないこと（古い応答で上書きしない）を見るときも、知らせを待ってから見ないと、上書きされる前の値を見て通ってしまう。
+// WHY setTimeout(0) を 2 回待つ: 1 回だけ待つ形では、続けて 12 回実行したうち 3 回で、知らせの前の値を見て落ちた（2026-10-03 実測）。
+//   見込み（コードを読んだ推測）: 知らせのタイマーは操作の Promise の後に続く microtask の連鎖の中で積まれ、1 回目のタイマーは
+//   それより先に積まれうるので、ミリ秒の境をまたぐと知らせより先に動く。2 回目は 1 回目が動いた後（microtask がすべて終わった後）に
+//   積むので、先に積まれた知らせのタイマーの後に動く。2 回待つ形では、続けて 15 回・2 並列で 16 回の実行で落ちなかった。
+async function actAndFlush(operation: () => unknown) {
+  await act(async () => {
+    await operation();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 type Deferred<T> = ReturnType<typeof deferred<T>>;
 type ListResponse = { todos: (typeof milk)[] };
 
@@ -78,97 +87,20 @@ describe("初回の読み込み", () => {
 
     // then
     expect(result.current.isLoading).toBe(true);
+    expect(result.current.todos).toEqual([]);
     expect(result.current.newTitle).toBe("");
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(result.current.todos).toEqual([milk]);
     expect(result.current.error).toBeNull();
+    expect(TodoApi.list).toHaveBeenCalledTimes(1);
   });
 
-  // StrictMode（Next の App Router は開発時に有効）では、mount 時の effect が「実行 → 片付け → 実行」と 2 回動き、
-  // 一覧の GET も 2 回送られる。応答の順序は送った順とは限らないので、後に送った GET の結果だけを正とする。
-  test("StrictMode で 2 回送った GET のうち、先に送った方の応答が後から届いても反映しない", async () => {
-    // given
-    const firstResponse = deferred<{ todos: (typeof milk)[] }>();
-    vi.mocked(TodoApi.list)
-      .mockReturnValueOnce(firstResponse.promise)
-      .mockResolvedValueOnce({ todos: [milk] });
-    const { result } = renderHook(() => useTodoScreen(), {
-      wrapper: StrictMode,
-    });
-    await waitFor(() => expect(result.current.todos).toEqual([milk]));
-
-    // when
-    await act(async () => firstResponse.resolve({ todos: [] }));
-
-    // then
-    expect(TodoApi.list).toHaveBeenCalledTimes(2);
-    expect(result.current.todos).toEqual([milk]);
-    expect(result.current.isLoading).toBe(false);
-  });
-
-  // Next 16 は cacheComponents を有効にすると、画面遷移で前のページを unmount せずに React の <Activity> で隠す
-  // （Next.js 16.3.6 同梱ドキュメント node_modules/next/dist/docs/01-app/02-guides/preserving-ui-state.md）。
-  // 隠すときは effect の片付けが走り、隠れている間に届いた応答の state 更新も反映される（unmount と違って捨てられない）。
-  // 片付けで送信中の GET を古い扱いにしないと、隠れている間に届いた古い一覧が、再表示後に一瞬表示されてしまう。
-  test("Activity で隠れている間に届いた GET の応答は反映せず、再表示したときに取り直す", async () => {
-    // given
-    const firstResponse = deferred<ListResponse>();
-    vi.mocked(TodoApi.list)
-      .mockReturnValueOnce(firstResponse.promise)
-      // 再表示で送り直す GET は返さずにおき、読み込み中のままであることを見る。
-      .mockReturnValueOnce(deferred<ListResponse>().promise);
-    let latest: ReturnType<typeof useTodoScreen> | undefined;
-    function Probe() {
-      latest = useTodoScreen();
-      return null;
-    }
-    // テストファイルは .ts（hook のテストの命名）なので JSX を使わず createElement で組み立てる。
-    // children は第 3 引数で渡す（Biome の noChildrenProp）。ActivityProps は children を必須にしているため、
-    // props（{ mode }）だけでは型が合わない。children は第 3 引数で渡しているので ActivityProps として扱う。
-    const withActivity = (mode: "visible" | "hidden") =>
-      createElement(Activity, { mode } as ActivityProps, createElement(Probe));
-    const view = render(withActivity("visible"));
-
-    // when
-    view.rerender(withActivity("hidden"));
-    await act(async () => firstResponse.resolve({ todos: [milk] }));
-    view.rerender(withActivity("visible"));
-
-    // then
-    await waitFor(() => expect(TodoApi.list).toHaveBeenCalledTimes(2));
-    expect(latest?.todos).toEqual([]);
-    expect(latest?.isLoading).toBe(true);
-  });
-
-  test("StrictMode で先に送った GET が先に返っても、後に送った GET が返るまで読み込み中のまま", async () => {
-    // given
-    const firstResponse = deferred<{ todos: (typeof milk)[] }>();
-    const secondResponse = deferred<{ todos: (typeof milk)[] }>();
-    vi.mocked(TodoApi.list)
-      .mockReturnValueOnce(firstResponse.promise)
-      .mockReturnValueOnce(secondResponse.promise);
-    const { result } = renderHook(() => useTodoScreen(), {
-      wrapper: StrictMode,
-    });
-
-    // when
-    await act(async () => firstResponse.resolve({ todos: [milk] }));
-
-    // then
-    expect(result.current.isLoading).toBe(true);
-    expect(result.current.todos).toEqual([]);
-
-    // when
-    await act(async () => secondResponse.resolve({ todos: [bread] }));
-
-    // then
-    expect(result.current.isLoading).toBe(false);
-    expect(result.current.todos).toEqual([bread]);
-  });
-
+  // 初回の GET（追加前の一覧）が遅れている間に追加すると、追加後の一覧を取り直す。後から届いた初回の応答は古いので使わない。
+  // WHY 利用者に見える振る舞いとして残す: TanStack Query は、データの無いクエリの取得中に取り直しを頼まれると、送信中の GET を
+  //   使い回す（query-core の Query.fetch）。追加の後に取り消してから取り直さないと、追加前の一覧が表示される。
   test("初回の取得が遅れて届いても、追加後に取り直した一覧を上書きしない", async () => {
     // given
-    const initialResponse = deferred<{ todos: (typeof milk)[] }>();
+    const initialResponse = deferred<ListResponse>();
     vi.mocked(TodoApi.list)
       .mockReturnValueOnce(initialResponse.promise)
       .mockResolvedValueOnce({ todos: [milk] });
@@ -177,14 +109,23 @@ describe("初回の読み込み", () => {
 
     // when
     act(() => result.current.setNewTitle("牛乳を買う"));
-    await act(() => result.current.addTodo());
+    let adding: Promise<void> = Promise.resolve();
+    act(() => {
+      adding = result.current.addTodo();
+    });
 
     // then
-    expect(result.current.todos).toEqual([milk]);
+    // WHY 追加を await せずに waitFor で待つ: 初回の GET を使い回す誤りでは、追加が初回の GET の応答を待ち続ける。await すると
+    //   テストが止まり（act の範囲も閉じず）、後のテストまで巻き込んで落ちる。waitFor なら、このテストだけが時間切れで落ちる。
+    await waitFor(() => expect(result.current.todos).toEqual([milk]));
+    expect(TodoApi.list).toHaveBeenCalledTimes(2);
     expect(result.current.isLoading).toBe(false);
 
     // when
-    await act(async () => initialResponse.resolve({ todos: [] }));
+    await actAndFlush(async () => {
+      initialResponse.resolve({ todos: [] });
+      await adding;
+    });
 
     // then
     expect(result.current.todos).toEqual([milk]);
@@ -192,26 +133,29 @@ describe("初回の読み込み", () => {
 
   test("初回の取得が遅れて失敗しても、追加後に取り直した一覧を残し、エラーも出さない", async () => {
     // given
-    const initialResponse = deferred<void>();
+    const initialResponse = deferred<ListResponse>();
     vi.mocked(TodoApi.list)
-      .mockReturnValueOnce(
-        initialResponse.promise.then(() => {
-          throw new Error("初回の取得に失敗しました");
-        }),
-      )
+      .mockReturnValueOnce(initialResponse.promise)
       .mockResolvedValueOnce({ todos: [milk] });
     vi.mocked(TodoApi.create).mockResolvedValue(milk);
     const { result } = renderHook(() => useTodoScreen(), { wrapper: JaLocale });
 
     // when
     act(() => result.current.setNewTitle("牛乳を買う"));
-    await act(() => result.current.addTodo());
+    let adding: Promise<void> = Promise.resolve();
+    act(() => {
+      adding = result.current.addTodo();
+    });
 
     // then
-    expect(result.current.todos).toEqual([milk]);
+    // WHY 追加を await せずに waitFor で待つ: 上のテストと同じ。
+    await waitFor(() => expect(result.current.todos).toEqual([milk]));
 
     // when
-    await act(async () => initialResponse.resolve());
+    await actAndFlush(async () => {
+      initialResponse.reject(new Error("初回の取得に失敗しました"));
+      await adding;
+    });
 
     // then
     expect(result.current.todos).toEqual([milk]);
@@ -252,8 +196,7 @@ describe("初回の読み込み", () => {
 
     // when
     const { result } = renderHook(() => useTodoScreen(), {
-      wrapper: ({ children }) =>
-        createElement(LocaleProvider, { locale: "en", children }),
+      wrapper: EnLocale,
     });
 
     // then
@@ -296,7 +239,7 @@ describe("追加", () => {
 
     // when
     act(() => result.current.setNewTitle("牛乳を買う"));
-    await act(() => result.current.addTodo());
+    await actAndFlush(() => result.current.addTodo());
 
     // then
     expect(TodoApi.create).toHaveBeenCalledWith({ title: "牛乳を買う" });
@@ -313,27 +256,59 @@ describe("追加", () => {
 
     // when
     act(() => result.current.setNewTitle("  牛乳を買う  "));
-    await act(() => result.current.addTodo());
+    await actAndFlush(() => result.current.addTodo());
 
     // then
     expect(TodoApi.create).toHaveBeenCalledWith({ title: "牛乳を買う" });
   });
 
-  test("空白だけの title は送らない", async () => {
+  // WHY 何も表示しない: 空白だけの入力は送るまでもなく作れないので、送らずに止める（以前と同じ）。文言を出すとサーバの 400 の
+  //   文言（todo.title.empty）と二重の仕組みになる。
+  test("空白だけの title は送らず、エラーも出さず、入力も変えない", async () => {
     // given
     vi.mocked(TodoApi.list).mockResolvedValue({ todos: [] });
     const { result } = await renderLoaded();
 
     // when
     act(() => result.current.setNewTitle("   "));
-    await act(() => result.current.addTodo());
+    await actAndFlush(() => result.current.addTodo());
 
     // then
     expect(TodoApi.create).not.toHaveBeenCalled();
     expect(TodoApi.list).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBeNull();
+    expect(result.current.fieldErrors).toStrictEqual({});
+    expect(result.current.newTitle).toBe("   ");
   });
 
-  test("作成は成功しても、その後の一覧の再取得に失敗すると、error に message が入り、入力は残る", async () => {
+  test("空白だけで止めた後も、前の操作のエラーは残る（送っていないので置き換えない）", async () => {
+    // given
+    vi.mocked(TodoApi.list).mockResolvedValue({ todos: [] });
+    vi.mocked(TodoApi.create).mockRejectedValue(
+      new ApiError({
+        status: 500,
+        type: "/problems/internal-error",
+        key: "server.internalError",
+      }),
+    );
+    const { result } = await renderLoaded();
+    act(() => result.current.setNewTitle("牛乳を買う"));
+    await actAndFlush(() => result.current.addTodo());
+
+    // when
+    act(() => result.current.setNewTitle("   "));
+    await actAndFlush(() => result.current.addTodo());
+
+    // then
+    expect(TodoApi.create).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe(
+      tJa(commonMessages, "server.internalError"),
+    );
+  });
+
+  // WHY 入力を空にする（以前は残していた）: 作成は成功しているので、入力を残すと同じ Todo をもう一度送って重複させやすい。
+  //   一覧を取り直せなかったことは error で伝える（Issue #449 で、作成の成否だけで入力を扱うようにした）。
+  test("作成は成功しても、その後の一覧の再取得に失敗すると、error に message が入り、入力は空にする", async () => {
     // given
     vi.mocked(TodoApi.list)
       .mockResolvedValueOnce({ todos: [] })
@@ -349,14 +324,14 @@ describe("追加", () => {
 
     // when
     act(() => result.current.setNewTitle("牛乳を買う"));
-    await act(() => result.current.addTodo());
+    await actAndFlush(() => result.current.addTodo());
 
     // then
     expect(TodoApi.create).toHaveBeenCalledWith({ title: "牛乳を買う" });
     expect(result.current.error).toBe(
       tJa(commonMessages, "server.internalError"),
     );
-    expect(result.current.newTitle).toBe("牛乳を買う");
+    expect(result.current.newTitle).toBe("");
   });
 
   // 追加の後の再取得（GET）を待つ間に、別の操作（完了の切り替え）の再取得が先に終わった場合。
@@ -390,8 +365,8 @@ describe("追加", () => {
         adding = result.current.addTodo();
       });
       await waitFor(() => expect(TodoApi.list).toHaveBeenCalledTimes(2));
-      await act(() => result.current.toggleTodo("todo-1", true));
-      await act(async () => {
+      await actAndFlush(() => result.current.toggleTodo("todo-1", true));
+      await actAndFlush(async () => {
         settle(staleReload);
         await adding;
       });
@@ -418,7 +393,7 @@ describe("追加", () => {
 
     // when
     act(() => result.current.setNewTitle("牛乳を買う"));
-    await act(() => result.current.addTodo());
+    await actAndFlush(() => result.current.addTodo());
 
     // then
     expect(result.current.error).toBe(
@@ -436,7 +411,7 @@ describe("項目ごとのエラー", () => {
     vi.mocked(TodoApi.create).mockRejectedValue(reason);
     const view = await renderLoaded();
     act(() => view.result.current.setNewTitle("牛乳を買う"));
-    await act(() => view.result.current.addTodo());
+    await actAndFlush(() => view.result.current.addTodo());
     return view;
   }
 
@@ -537,7 +512,7 @@ describe("項目ごとのエラー", () => {
     vi.mocked(TodoApi.create).mockResolvedValue(milk);
 
     // when
-    await act(() => result.current.addTodo());
+    await actAndFlush(() => result.current.addTodo());
 
     // then
     expect(result.current.fieldErrors).toStrictEqual({});
@@ -556,14 +531,13 @@ describe("項目ごとのエラー", () => {
       }),
     );
     const { result } = renderHook(() => useTodoScreen(), {
-      wrapper: ({ children }) =>
-        createElement(LocaleProvider, { locale: "en", children }),
+      wrapper: EnLocale,
     });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     // when
     act(() => result.current.setNewTitle("牛乳を買う"));
-    await act(() => result.current.addTodo());
+    await actAndFlush(() => result.current.addTodo());
 
     // then
     expect(result.current.fieldErrors).toStrictEqual({
@@ -583,7 +557,7 @@ describe("完了の切り替え", () => {
     const { result } = await renderLoaded();
 
     // when
-    await act(() => result.current.toggleTodo("todo-1", true));
+    await actAndFlush(() => result.current.toggleTodo("todo-1", true));
 
     // then
     expect(TodoApi.changeCompletion).toHaveBeenCalledWith("todo-1", true);
@@ -602,7 +576,7 @@ describe("削除", () => {
     const { result } = await renderLoaded();
 
     // when
-    await act(() => result.current.deleteTodo("todo-1"));
+    await actAndFlush(() => result.current.deleteTodo("todo-1"));
 
     // then
     expect(TodoApi.delete).toHaveBeenCalledWith("todo-1");
@@ -626,7 +600,7 @@ describe("削除", () => {
     const { result } = await renderLoaded();
 
     // when
-    await act(() => result.current.deleteTodo("todo-1"));
+    await actAndFlush(() => result.current.deleteTodo("todo-1"));
 
     // then
     expect(result.current.error).toBe(
@@ -634,7 +608,87 @@ describe("削除", () => {
     );
 
     // when
-    await act(() => result.current.deleteTodo("todo-1"));
+    await actAndFlush(() => result.current.deleteTodo("todo-1"));
+
+    // then
+    expect(result.current.error).toBeNull();
+  });
+});
+
+// 画面に出すエラーは 1 つ（error と fieldErrors）で、変更の操作の失敗と一覧の取得の失敗の両方から来る。
+describe("エラーの出し分け", () => {
+  const internalError = new ApiError({
+    status: 500,
+    type: "/problems/internal-error",
+    key: "server.internalError",
+  });
+  const notFound = new ApiError({
+    status: 404,
+    type: "/problems/not-found",
+    key: "todo.notFound",
+    params: { id: "todo-1" },
+  });
+
+  test("一覧の取得の失敗は、変更の後に一覧を取り直せると消える", async () => {
+    // given
+    vi.mocked(TodoApi.list)
+      .mockRejectedValueOnce(internalError)
+      .mockResolvedValueOnce({ todos: [] });
+    vi.mocked(TodoApi.delete).mockResolvedValue(undefined);
+    const { result } = await renderLoaded();
+
+    // when
+    await actAndFlush(() => result.current.deleteTodo("todo-1"));
+
+    // then
+    expect(result.current.error).toBeNull();
+    expect(result.current.todos).toEqual([]);
+  });
+
+  // WHY 変更の失敗を優先する: 利用者がいま行った操作の結果なので、前からある一覧の取得の失敗より新しい。
+  test("一覧の取得に失敗している間に変更も失敗すると、変更の失敗を出す", async () => {
+    // given
+    vi.mocked(TodoApi.list).mockRejectedValue(internalError);
+    vi.mocked(TodoApi.delete).mockRejectedValue(notFound);
+    const { result } = await renderLoaded();
+
+    // when
+    await actAndFlush(() => result.current.deleteTodo("todo-1"));
+
+    // then
+    expect(result.current.error).toBe(
+      tJa(commonMessages, "todo.notFound", { id: "todo-1" }),
+    );
+  });
+
+  // WHY 送っている間も消さない: 結果が出る前に消すと、失敗が続くときに文言が消えてまた出る（ちらつく）。
+  //   文言は次の操作の成功・失敗で置き換える（.claude/rules/code/frontend.md の「項目ごとの誤り」）。
+  test("前の操作のエラーは、次の操作を送っている間も残り、成功したら消える", async () => {
+    // given
+    const secondDelete = deferred<undefined>();
+    vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
+    vi.mocked(TodoApi.delete)
+      .mockRejectedValueOnce(notFound)
+      .mockReturnValueOnce(secondDelete.promise);
+    const { result } = await renderLoaded();
+    await actAndFlush(() => result.current.deleteTodo("todo-1"));
+
+    // when
+    let deleting: Promise<void> = Promise.resolve();
+    act(() => {
+      deleting = result.current.deleteTodo("todo-1");
+    });
+
+    // then
+    expect(result.current.error).toBe(
+      tJa(commonMessages, "todo.notFound", { id: "todo-1" }),
+    );
+
+    // when
+    await actAndFlush(async () => {
+      secondDelete.resolve(undefined);
+      await deleting;
+    });
 
     // then
     expect(result.current.error).toBeNull();

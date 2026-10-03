@@ -40,6 +40,16 @@ const nextConfig: NextConfig = {
   // poweredByHeader: false … 応答の X-Powered-By: Next.js を付けない（Issue #106）。
   //   WHY: 使っているフレームワークを外に知らせても利用者の得は無く、版ごとの脆弱性を狙う攻撃の手がかりになるだけ。
   poweredByHeader: false,
+  // reactCompiler: true … React Compiler（babel-plugin-react-compiler。devDependencies）で、component と hook をビルドのときに
+  //   自動でメモ化する（Issue #449）。Next 16 で stable、既定は off（next 16.3.6 同梱の
+  //   node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/reactCompiler.md）。Next は JSX や hook を
+  //   含むファイルだけに当てる。
+  //   WHY: useCallback / useMemo と依存配列を手で書かずに済ませる。手書きの依存配列は書き間違えると古い値を使い続け、
+  //   変えても挙動が変わらない依存配列は mutation testing の等価な変異（Stryker の disable）になっていた。
+  //   WHY compilationMode を指定しない（既定の "infer"。注釈 "use memo" を付けたものだけにしない）: 全体に当て、書き方を 1 つにする。
+  //   限界: Vitest（@vitejs/plugin-react）は React Compiler を通さないので、単体テストはメモ化の無いコードを見る。コンパイル後の
+  //   動きは next build と E2E（apps/e2e）で確かめる。
+  reactCompiler: true,
   // headers … すべての応答（画面・API・静的ファイル。source の "/:path*" はすべてのパス）に共通のセキュリティヘッダを付ける（Issue #106）。
   //   値と WHY は shared/security/security-headers.ts の SecurityHeaders.common（テストで固定）。
   //   WHY ここ（Proxy でなく）: Proxy の matcher は静的ファイル（/_next/static など）を除くので、そこに付けられない。nosniff・HSTS は

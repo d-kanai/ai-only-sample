@@ -6,6 +6,7 @@ import {
   type Messages,
   type TranslateArgs,
 } from "@/shared/i18n/i18n";
+import { QueryProvider } from "@/shared/query/query-provider";
 import { DesignSystem } from "./design-system";
 
 // テスト専用（本番のコードからは使わない。test-support/ に置くのが目印で、本番のコードからの import は rule-tests/test-support.test.ts が止め、
@@ -29,12 +30,30 @@ export function tJa<M extends Messages, K extends MessageKey<M>>(
 // render / renderHook の wrapper（render(ui, { wrapper: JaLocale })）。
 // デザインシステムの Provider（./design-system.tsx の DesignSystem）でも包む: 画面・部品は Mantine の部品で描くので、
 //   本番の app/layout.tsx と同じく両方で包まないと描けない（Issue #292）。
+// TanStack Query の Provider（shared/query/query-provider.tsx の QueryProvider）でも包む: 画面・hook は useQuery / useMutation で
+//   取得するので、本番の app/layout.tsx と同じく QueryClient が無いと「No QueryClient set」で描けない（Issue #449）。
+//   QueryProvider は mount ごとに QueryClient を作るので、テストごと（render / renderHook ごと）に空のキャッシュから始まる。
 // WHY render を包む関数（renderInJa など）を置かない: Provider の既定値も ja なので、包む処理を消しても結果が変わらず、
 //   mutation testing で等価な変異になる。wrapper を各テストで明示する。
 export function JaLocale({ children }: { children: ReactNode }) {
   return (
     <DesignSystem>
-      <LocaleProvider locale="ja">{children}</LocaleProvider>
+      <LocaleProvider locale="ja">
+        <QueryProvider>{children}</QueryProvider>
+      </LocaleProvider>
+    </DesignSystem>
+  );
+}
+
+// en で描く wrapper（render(ui, { wrapper: EnLocale })）。JaLocale と同じ Provider で包み、ロケールだけを en にする。
+// 画面・hook の「en で描く」テスト（.claude/rules/code/frontend.md の「テスト」の表の「i18n」）で使う。
+// WHY test-support に置く: QueryProvider も要るようになり（Issue #449）、各テストで Provider を組み立てると包み忘れが起きる。
+export function EnLocale({ children }: { children: ReactNode }) {
+  return (
+    <DesignSystem>
+      <LocaleProvider locale="en">
+        <QueryProvider>{children}</QueryProvider>
+      </LocaleProvider>
     </DesignSystem>
   );
 }
