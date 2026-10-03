@@ -222,7 +222,7 @@ const source = (...lines: string[]) => lines.join("\n");
 const DIVIDER = "    # ───── 一覧を開く ─────";
 // 業務の言葉だけで、When の前に仕切りのある .feature（must reject の例は、これに違反を 1 つ足す）。
 const GOOD_FEATURE = [
-  "# 冒頭のコメントは技術の言葉（DB・API）があってもよい",
+  "# 冒頭のコメントは技術の言葉（DB・SQL）があってもよい",
   "Feature: 画面での Todo の管理",
   "",
   "  Background: 空の Todo 一覧",
@@ -304,13 +304,13 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario(".feature の中身の判定（must reject）", ({ And }) => {
     And(
-      "技術の言葉・状態コード・許さないタグを足した行は、その行の違反になる（API・400・skip・許すタグと同じ行の only）",
+      "技術の言葉・状態コード・許さないタグを足した行は、その行の違反になる（DB・400・skip・許すタグと同じ行の only）",
       () => {
         // given: GOOD_FEATURE（10 行）の後に 11 行目として足す
         const cases: [string, string, E2eFeatureRuleId][] = [
           [
-            "step に技術の言葉（API）",
-            "    Then API が呼ばれる",
+            "step に技術の言葉（DB）",
+            "    Then DB に保存される",
             "e2e-feature-business-language",
           ],
           [

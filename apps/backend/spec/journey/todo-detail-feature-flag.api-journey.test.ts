@@ -33,7 +33,7 @@ import { PostgresTransactionRunner } from "../../shared/drizzle/transaction.post
 import { ApiCoverage } from "../../test-support/api-coverage";
 import { TestDatabase } from "../../test-support/database";
 
-// API ジャーニーテスト（Issue #156）: Todo の詳細画面の出し分けという業務の流れに沿って、フィーチャーフラグの評価（OFREP の
+// API ジャーニーテスト（Issue #156）: Todo の詳細画面のフィーチャーフラグという業務の流れに沿って、フィーチャーフラグの評価（OFREP の
 //   一括・1 件）と Todo の作成・詳細の API を、実 Postgres の上で本番と同じ組み立てで順に呼ぶ。WHY（API ジャーニーという層・本番の
 //   export を使わずここで組み立てる・テストダブル無し・変更系の後に DB を読む・step 間の値を変数で渡す・技術の検証をここに閉じる・
 //   Stryker で実行しない）は todo-lifecycle.api-journey.test.ts の冒頭と同じ。
@@ -43,7 +43,7 @@ import { TestDatabase } from "../../test-support/database";
 // WHY フラグの一覧は本番の FEATURE_FLAGS: 本番と同じ組み立てで、画面が実際に受け取る値の流れを確かめる。値の組み合わせ（off など）は
 //   API 仕様（spec/api/feature-flag）と単体テストが確かめる。
 
-// 画面が出し分けに使うフラグ（一覧から詳細へのリンク）。
+// 画面がリンクの表示の切り替えに使うフィーチャーフラグ（一覧から詳細へのリンク）。
 // WHY 型で縛る: 本番の一覧に無い key を書くと型エラーにする（画面と同じく FeatureFlagKey で受ける）。
 const DETAIL_SCREEN: FeatureFlagKey = "todo-detail-screen";
 
@@ -107,7 +107,7 @@ describeFeature(feature, ({ Background, Scenario }) => {
   });
 
   Scenario(
-    "詳細画面が使えるかを確かめてから詳細を見る",
+    "詳細画面のフィーチャーフラグを評価してから詳細を見る",
     ({ When, Then, And }) => {
       let response: Response;
       let milk: CreateTodoResponse;
@@ -115,13 +115,13 @@ describeFeature(feature, ({ Background, Scenario }) => {
       let changeLogCount: number;
 
       // 画面の OFREP の web provider は context が無いと本文 {} を送る（evaluate-feature-flags.api.ts の requestSchema）。
-      When("画面を開くときに機能の出し分けをまとめて読む", async () => {
+      When("画面を開くときにフィーチャーフラグをまとめて評価する", async () => {
         response = await handlers.postEvaluateFlags(
           jsonRequest("/api/ofrep/v1/evaluate/flags", {}),
         );
       });
 
-      Then("詳細画面は使えると返る", async () => {
+      Then("詳細画面のフィーチャーフラグはオンと返る", async () => {
         expect(response.status).toBe(200);
         const body = (await response.json()) as EvaluateFeatureFlagsResponse;
         expect(body.flags).toContainEqual({
@@ -131,7 +131,7 @@ describeFeature(feature, ({ Background, Scenario }) => {
         });
       });
 
-      And("出し分けを読んでも Todo は増えない", async () => {
+      And("フィーチャーフラグを評価しても Todo は増えない", async () => {
         await expect(database.db.select().from(todos)).resolves.toStrictEqual(
           [],
         );
@@ -159,8 +159,8 @@ describeFeature(feature, ({ Background, Scenario }) => {
         },
       );
 
-      // 画面のほか、サーバ側で 1 つのフラグだけを確かめる使い方（OFREP の 1 件の評価）。
-      When("詳細画面が使えるかを 1 つだけ確かめる", async () => {
+      // 画面のほか、サーバ側で 1 つのフラグだけを評価する使い方（OFREP の 1 件の評価）。
+      When("詳細画面のフィーチャーフラグだけを評価する", async () => {
         response = await handlers.postEvaluateFlag(
           jsonRequest(`/api/ofrep/v1/evaluate/flags/${DETAIL_SCREEN}`, {
             context: { targetingKey: "user-123" },
@@ -169,7 +169,7 @@ describeFeature(feature, ({ Background, Scenario }) => {
         );
       });
 
-      Then("詳細画面は使えると 1 つだけ返る", async () => {
+      Then("詳細画面のフィーチャーフラグだけがオンと返る", async () => {
         expect(response.status).toBe(200);
         await expect(response.json()).resolves.toStrictEqual({
           key: DETAIL_SCREEN,
@@ -179,7 +179,7 @@ describeFeature(feature, ({ Background, Scenario }) => {
       });
 
       And(
-        "確かめても Todo は {string} の 1 件のまま変わらない",
+        "評価しても Todo は {string} の 1 件のまま変わらない",
         async (_ctx: TestContext, title: string) => {
           await expect(database.db.select().from(todos)).resolves.toStrictEqual(
             [rowOf({ ...milk, title })],
