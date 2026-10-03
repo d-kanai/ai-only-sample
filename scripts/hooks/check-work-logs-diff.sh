@@ -58,7 +58,9 @@ if [ "$pr_author" = "renovate[bot]" ]; then
 fi
 
 # git diff の失敗（base-ref が無い・分岐点が無いなど）は通さない（差分が取れないまま exit 0 にしない）。
-if ! changed=$(git diff --name-only --no-renames --diff-filter=AM "${base}...HEAD"); then
+# WHY core.quotePath=false: 既定（true）では非 ASCII のパスが "..." で囲まれ 8 進でエスケープされるので、日本語を含むブランチ名の
+#   ログのファイル名が下の比較で一致しない（PR #444 の Codex の指摘。テストで固定）。
+if ! changed=$(git -c core.quotePath=false diff --name-only --no-renames --diff-filter=AM "${base}...HEAD"); then
   echo "check-work-logs-diff: ${base}...HEAD の差分を取れない（base-ref と履歴を確認。CI では actions/checkout の fetch-depth: 0 が要る）" >&2
   exit 1
 fi

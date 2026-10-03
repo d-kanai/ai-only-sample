@@ -135,6 +135,20 @@ describe("check-work-logs-diff.sh", () => {
       expect(result.status).toBe(0);
     });
 
+    // WHY 日本語のブランチ名: git の既定（core.quotePath=true）では --name-only が非 ASCII のパスを "..." と 8 進でエスケープして出すので、
+    //   ファイル名の比較で一致しなくなる（PR #444 の Codex の指摘）。
+    it("日本語を含むブランチ名（feat/1-日本語 → feat-1-日本語.md）でも数える", () => {
+      // given
+      git(["checkout", "-q", "-b", "feat/1-日本語"]);
+      commitFiles({ "docs/work-logs/2026-09-28/feat-1-日本語.md": "# 28\n" });
+
+      // when
+      const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(0);
+    });
+
     // WHY head.ref: CI の actions/checkout は PR のマージコミットを detached HEAD で取り出すので、今のブランチ名が無い。
     it("GITHUB_EVENT_PATH があれば pull_request.head.ref のブランチ名で見る（detached HEAD でも）", () => {
       // given
