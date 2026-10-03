@@ -5,6 +5,7 @@ import { inMemoryTransaction } from "../../../../test-support/transaction-runner
 import { ListTodosQuery } from "../application/list-todos.query";
 import { Todo } from "../domain/todo";
 import type { TodoRepository } from "../domain/todo-repository";
+import { TodoTitle } from "../domain/todo-title";
 import { PostgresTodoRepository } from "../infra/todo-repository.postgres";
 import {
   ListTodosApi,
@@ -78,8 +79,10 @@ describe("GET /api/todos", () => {
   test("作成した Todo を ListTodosResponse の形で、作成した順（作成日時の昇順）に返す", async () => {
     // given
     const { repository, GET } = setup();
-    const first = Todo.create("牛乳を買う");
-    const second = Todo.create("卵を買う").changeCompletion(true);
+    const first = Todo.create(new TodoTitle("牛乳を買う"));
+    const second = Todo.create(new TodoTitle("卵を買う")).changeCompletion(
+      true,
+    );
     await repository.insert(first, inMemoryTransaction);
     await repository.insert(second, inMemoryTransaction);
 
@@ -92,13 +95,13 @@ describe("GET /api/todos", () => {
     expect(body).toEqual({
       todos: [
         {
-          id: first.id,
+          id: first.id.value,
           title: "牛乳を買う",
           completed: false,
           createdAt: first.createdAt.toISOString(),
         },
         {
-          id: second.id,
+          id: second.id.value,
           title: "卵を買う",
           completed: true,
           createdAt: second.createdAt.toISOString(),

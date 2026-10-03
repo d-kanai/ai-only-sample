@@ -8,6 +8,7 @@ import {
   inMemoryTransaction,
 } from "../../../../test-support/transaction-runner.in-memory";
 import { CreateTodoCommand } from "../application/create-todo.command";
+import { TodoId } from "../domain/todo-id";
 import { PostgresTodoRepository } from "../infra/todo-repository.postgres";
 import {
   CreateTodoApi,
@@ -63,9 +64,9 @@ describe("POST /api/todos", () => {
     });
     // createdAt は ISO 8601（Date#toISOString の形）で返す。
     expect(new Date(body.createdAt).toISOString()).toBe(body.createdAt);
-    await expect(repository.findById(body.id)).resolves.toMatchObject({
-      title: "牛乳を買う",
-    });
+    await expect(
+      repository.findById(new TodoId(body.id)),
+    ).resolves.toMatchObject({ title: { value: "牛乳を買う" } });
   });
 
   // WHY 本番の POST（モジュールの最下部で組み立てたもの）を確かめる: InMemory に切り替える分岐を持たない（Issue #59）
@@ -91,7 +92,7 @@ describe("POST /api/todos", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(insert).toHaveBeenCalledTimes(1);
     expect(insert.mock.calls[0]).toEqual([
-      expect.objectContaining({ title: "牛乳を買う" }),
+      expect.objectContaining({ title: { value: "牛乳を買う" } }),
       inMemoryTransaction,
     ]);
   });

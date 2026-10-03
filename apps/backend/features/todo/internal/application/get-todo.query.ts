@@ -1,4 +1,5 @@
 import type { Todo } from "../domain/todo";
+import { TodoId } from "../domain/todo-id";
 import { RequiredTodo, type TodoRepository } from "../domain/todo-repository";
 
 // id で Todo を 1 件返す（query: 読むだけで状態を変えない）。
@@ -11,6 +12,9 @@ export class GetTodoQuery {
     //   not_found の DomainError の作り方は domain の RequiredTodo.of が 1 か所で持つ（findByIdForUpdate と同じ例外）。
     // WHY findByIdForUpdate ではなく findById（Issue #215）: findByIdForUpdate は command 用で、トランザクションの中で行をロックして読む。
     //   query はトランザクションを張らず、ロックも取らない（command がロックしている間も待たずに読める）。
-    return RequiredTodo.of(await this.repository.findById(id), id);
+    // WHY ここで TodoId を作る（引数は string のまま）: 引数は presentation から届く値の形で、値オブジェクトにするのは domain に
+    //   渡す直前（Issue #423）。presentation の ResourceId.parseUuid が uuid の形を先に確かめる（違えば 404）。
+    const todoId = new TodoId(id);
+    return RequiredTodo.of(await this.repository.findById(todoId), todoId);
   }
 }
