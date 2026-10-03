@@ -152,10 +152,7 @@ Entity の業務ルール（不変条件・用語・規則の理由）を `<name
 - ロジックの変異はテストを足して殺す。API のエラーの本文（Problem Details の `title`・`detail` など。`apps/backend/shared/http/problem.ts`・`problem-detail.en.ts`）も検証して殺す。
 - `// Stryker disable next-line <Mutator>: <理由>` は**等価な変異**と**検証しない文言**（内部のログなど）だけ。殺せるのに省くために使わない。「等価」と決める前にほかの実行経路を探す（例: `<Activity mode="hidden">` でも effect の片付けと state 更新は走る）。
 - 等価な変異を生む書き方をしない: 結果を変えない検査（`"error" in value` の後の型の確認）を書かない、握りつぶす `try` は対象の呼び出しだけを囲む、ロジックの定数（正規表現・変換表・URL・接頭辞）は関数の中に置く（最上位は `ignoreStatic` で外れる）。
-- 今の disable の一覧（すべて等価。足す・消すときはここを直す）:
-  - `apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.hook.ts` の依存配列 5 か所（`reloadTodos` は依存の無い useCallback で作り直されず、それを依存に持つ effect・`mutateAndReload`・`toggleTodo`・`removeTodo` も作り直されない）。
-  - `apps/frontend_customer/features/todo/screens/todo-detail-screen/todo-detail-screen.hook.ts` の世代の `+=`（`-=` でも毎回別の値になる）。
-  - `apps/backend/test-support/todo/todo-repository.in-memory.ts` の findAll の id の比較 `<`（id は Map のキーで一意なので `<=` でも同じ順）。
+- disable は理由をコメントに書く（`// Stryker disable next-line <Mutator>: <理由>`）。今ある disable は `grep -rn "Stryker disable" apps` で引く。
 - `ignoreStatic` で外れる最上位の値: テーブル宣言（`schema.ts`・`*.schema.ts`）は等価として受け入れる（理由は `stryker.config.mjs`）。列の分類表と `apps/shared/log-event.ts` の `LOG_EVENT_SCHEMAS` は、番兵の値を含む行の丸ごとの比較で固定する。`apps/backend/shared/change-log/change-operation.ts` の定数は等価の確認をしていない。
 - テストで `@repo/backend/...`・`@repo/shared/...` から値を import すると変異が届かない。それぞれの中のテスト（相対 import）で確かめる。
 
