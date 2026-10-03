@@ -10,6 +10,14 @@ import { formatMessage } from "@/shared/i18n/i18n";
 import { EnLocale, JaLocale, tJa } from "@/test-support/i18n";
 
 // HTTP の詳細は todo-api.test.ts で検証済みなので差し替え、hook が API をいつ何で呼び、結果をどう状態に反映するかを見る。
+//
+// この hook が保証する範囲（todoId が変わるとき）:
+// - 取得の結果（todo・isLoading・取得の失敗）は、TanStack Query のキャッシュのキー（TodoQueries.detail(todoId)）で todoId ごとに分かれる。
+//   hook のまま todoId だけが変わっても前の Todo を出さず、前の Todo の遅れた応答も新しい Todo に混ざらない。ここで見る。
+// - 更新の応答は、応答の Todo の id のキャッシュにだけ入る（別の Todo の表示を書き換えない）。ここで見る。
+// - 編集中の title・更新の失敗（hook の state）は、todoId が変わったら画面ごと作り直す前提（app/todo/[id]/page.tsx の key={id}）で、
+//   hook は todoId の変化を見ない。WHY: state を todoId ごとに戻す仕組み（以前の世代の ref・ignore）を hook に持たず、React の key に
+//   任せる。そのため、todoId だけを変えたときの入力・更新の失敗の扱いはここでは見ない（page.tsx は単体テストの対象外）。
 vi.mock("@/features/todo/api/todo-api");
 
 // globals 無効のため Testing Library の自動 cleanup が働かない。renderHook のコンポーネントもテストごとに unmount する。
@@ -39,17 +47,13 @@ function deferred<T>() {
 }
 
 // act の中で操作を行い、TanStack Query の知らせまで描画に反映してから返す。
-// WHY: TanStack Query はキャッシュの変化を setTimeout(0) で hook に知らせる（query-core 5.104.0 の notifyManager の既定。
-//   hook の購読は notifyManager.batchCalls）。操作の Promise が終わった時点では知らせがまだ届いておらず、act だけでは前の値のまま見える。
-//   値が変わらないこと（古い応答で上書きしない）を見るときも、知らせを待ってから見ないと、上書きされる前の値を見て通ってしまう。
-// WHY setTimeout(0) を 2 回待つ: 1 回だけ待つ形では、続けて 12 回実行したうち 3 回で、知らせの前の値を見て落ちた（2026-10-03 実測）。
-//   見込み（コードを読んだ推測）: 知らせのタイマーは操作の Promise の後に続く microtask の連鎖の中で積まれ、1 回目のタイマーは
-//   それより先に積まれうるので、ミリ秒の境をまたぐと知らせより先に動く。2 回目は 1 回目が動いた後（microtask がすべて終わった後）に
-//   積むので、先に積まれた知らせのタイマーの後に動く。2 回待つ形では、続けて 15 回・2 並列で 16 回の実行で落ちなかった。
+// WHY: 操作の Promise が終わった時点では、TanStack Query の hook への知らせ（テストでは microtask。test-support/i18n.tsx の
+//   notifyManager.setScheduler）がまだ届いていないことがあり、act だけでは前の値のまま見える。setTimeout(0) を 1 回待つと、
+//   その前に積まれた microtask（知らせを含む）がすべて動く。値が変わらないこと（古い応答で上書きしない）を見るときも、
+//   知らせを待ってから見ないと、上書きされる前の値を見て通ってしまう。
 async function actAndFlush(operation: () => unknown) {
   await act(async () => {
     await operation();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   });
 }
@@ -209,7 +213,6 @@ describe("初回の読み込み", () => {
 
     // then
     await waitFor(() => expect(result.current.todo).toEqual(bread));
-    expect(result.current.title).toBe("パンを買う");
   });
 
   test("todoId が変わると、新しい Todo の取得を待つ間は前の Todo とエラーを消して読み込み中にする", async () => {
@@ -335,9 +338,7 @@ describe("初回の読み込み", () => {
   });
 });
 
-// WHY 編集中の title とエラーは見ない: 本番では todoId が変わると app/todo/[id]/page.tsx の key で画面ごと mount し直すので、
-//   前の Todo の入力・エラーは残らない（React の key。hook を作り直す）。hook が todoId の変化を自分で扱うのは、取得と更新の
-//   結果の行き先（TanStack Query のキャッシュのキー）だけで、それをここで見る。
+// WHY 編集中の title とエラーは見ない: ファイルの冒頭の「この hook が保証する範囲」のとおり、画面ごとの作り直し（page.tsx の key）が前提。
 describe("todoId が変わった後に届いた前の Todo の更新結果", () => {
   test("title の保存の結果で、新しい Todo の表示を上書きしない", async () => {
     // given
@@ -517,6 +518,56 @@ describe("title の保存", () => {
     expect(result.current.screen.todo).toEqual(renamed);
     expect(result.current.screen.title).toBe("豆乳を買う");
   });
+
+  // 編集中（未保存）の入力は、保存するまで利用者のもの。サーバの title が変わっても（別の端末での変更など）黙って書き換えない。
+  // WHY: 画面へのフォーカスで TanStack Query が詳細を取り直すと、入力中の文字が消える。見出し（保存済みの title）は新しい値になる。
+  test.each<
+    [
+      string,
+      (
+        view: Awaited<ReturnType<typeof renderLoadedWithClient>>,
+      ) => Promise<void>,
+    ]
+  >([
+    [
+      "画面へのフォーカスなどで詳細を取り直した",
+      async (view) => {
+        await actAndFlush(() =>
+          view.result.current.queryClient.invalidateQueries({
+            queryKey: TodoQueries.detail("todo-1").queryKey,
+          }),
+        );
+      },
+    ],
+    [
+      "完了の切り替えの応答が届いた",
+      async (view) => {
+        await actAndFlush(() => view.result.current.screen.toggleCompleted());
+      },
+    ],
+  ])(
+    "編集中に%sとき、別の title が届いても入力は上書きしない",
+    async (_label, receive) => {
+      // given
+      const changedElsewhere = { ...milk, title: "別の端末で変えた" };
+      vi.mocked(TodoApi.get)
+        .mockResolvedValueOnce(milk)
+        .mockResolvedValueOnce(changedElsewhere);
+      vi.mocked(TodoApi.changeCompletion).mockResolvedValue({
+        ...changedElsewhere,
+        completed: true,
+      });
+      const view = await renderLoadedWithClient();
+      act(() => view.result.current.screen.setTitle("編集中"));
+
+      // when
+      await receive(view);
+
+      // then
+      expect(view.result.current.screen.todo?.title).toBe("別の端末で変えた");
+      expect(view.result.current.screen.title).toBe("編集中");
+    },
+  );
 
   test("空白だけの title は送らない", async () => {
     // given

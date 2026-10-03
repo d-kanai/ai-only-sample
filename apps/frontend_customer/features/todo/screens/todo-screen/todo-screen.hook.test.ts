@@ -53,17 +53,13 @@ function deferred<T>() {
 }
 
 // act の中で操作を行い、TanStack Query の知らせまで描画に反映してから返す。
-// WHY: TanStack Query はキャッシュの変化を setTimeout(0) で hook に知らせる（query-core 5.104.0 の notifyManager の既定。
-//   hook の購読は notifyManager.batchCalls）。操作の Promise が終わった時点では知らせがまだ届いておらず、act だけでは前の値のまま見える。
-//   値が変わらないこと（古い応答で上書きしない）を見るときも、知らせを待ってから見ないと、上書きされる前の値を見て通ってしまう。
-// WHY setTimeout(0) を 2 回待つ: 1 回だけ待つ形では、続けて 12 回実行したうち 3 回で、知らせの前の値を見て落ちた（2026-10-03 実測）。
-//   見込み（コードを読んだ推測）: 知らせのタイマーは操作の Promise の後に続く microtask の連鎖の中で積まれ、1 回目のタイマーは
-//   それより先に積まれうるので、ミリ秒の境をまたぐと知らせより先に動く。2 回目は 1 回目が動いた後（microtask がすべて終わった後）に
-//   積むので、先に積まれた知らせのタイマーの後に動く。2 回待つ形では、続けて 15 回・2 並列で 16 回の実行で落ちなかった。
+// WHY: 操作の Promise が終わった時点では、TanStack Query の hook への知らせ（テストでは microtask。test-support/i18n.tsx の
+//   notifyManager.setScheduler）がまだ届いていないことがあり、act だけでは前の値のまま見える。setTimeout(0) を 1 回待つと、
+//   その前に積まれた microtask（知らせを含む）がすべて動く。値が変わらないこと（古い応答で上書きしない）を見るときも、
+//   知らせを待ってから見ないと、上書きされる前の値を見て通ってしまう。
 async function actAndFlush(operation: () => unknown) {
   await act(async () => {
     await operation();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   });
 }

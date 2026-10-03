@@ -108,13 +108,23 @@ function useTitleForm(
   todoId: string,
   run: (send: TodoUpdate) => Promise<Todo | null>,
 ) {
+  // 取得した Todo の title（最初に届いたときの値）。入力の初期値にする。
+  // WHY 最初の 1 回だけにする（届くたびに入力へ入れない）: 画面へのフォーカスでの取り直しや完了の切り替えの応答で、別の端末で
+  //   変えた title が届いても、編集中（未保存）の入力を黙って書き換えないため（以前の実装も取得したときに 1 回だけ入れていた）。
+  //   入力を応答の title にそろえるのは、保存に成功したとき（下の submit の form.reset）だけ。
+  // WHY react-hook-form の resetOptions.keepDirtyValues にしない: 保存の応答で入力を置き換えるときも、入力が変更済み（dirty）と
+  //   みなされて残り、前後の空白を除く前の値のままになった（7.89.0 で実測。テスト「保存に成功すると、入力を応答の title にする」が落ちた）。
+  // WHY 描画の中で state を更新する（useEffect にしない）: 前の描画の値から決まる state は描画中に直すのが React の推奨
+  //   （https://react.dev/learn/you-might-not-need-an-effect の「Adjusting some state when a prop changes」）。条件があるので 1 回で止まる。
+  //   todoId が変わったときは page.tsx の key で hook ごと作り直すので、ここでは todoId の変化を見ない。
+  const [loadedTitle, setLoadedTitle] = useState<string | null>(null);
+  if (todo !== null && loadedTitle === null) setLoadedTitle(todo.title);
   const form = useForm({
     defaultValues: { title: "" },
-    // values … 取得した Todo の title を入力の値にする。react-hook-form は前の描画の values と中身が違うときだけ入力を置き換える
-    //   （7.89.0 の useForm の values の effect。deepEqual で比べる）。
-    //   WHY: 取得が終わったら（と、名前の変更の応答で title が変わったら）入力に入れ、完了の切り替えのように title が変わらない
-    //   更新では編集中の入力を残す。取得前（todo が null）は渡さず、既定の "" のまま。
-    values: todo === null ? undefined : { title: todo.title },
+    // values … loadedTitle が決まったら入力の値にする。react-hook-form は前の描画の values と中身が違うときだけ入力を置き換える
+    //   （7.89.0 の useForm の values の effect。deepEqual で比べる）ので、loadedTitle が変わらない限り入力は書き換わらない。
+    //   取得前（null）は渡さず、既定の "" のまま。
+    values: loadedTitle === null ? undefined : { title: loadedTitle },
     // 前後の空白を除いてから 1 文字以上か確かめる（一覧画面の追加と同じ。空白だけなら送らず、何も表示しない）。
     // WHY スキーマを hook の中で作る: 一覧画面の useNewTodoForm と同じ（最上位の式は mutation testing で数えない）。
     resolver: zodResolver(z.object({ title: z.string().trim().min(1) })),
@@ -123,8 +133,8 @@ function useTitleForm(
 
   const submit = form.handleSubmit(async ({ title }) => {
     const updated = await run(() => TodoApi.rename(todoId, title));
-    // 成功したら入力を応答の title（空白を除いた保存済みの値）にする。保存済みと同じ title を保存したときは values が変わらず
-    //   置き換わらないので、ここで入れる。失敗したときは入力を残し、直して再送できるようにする。
+    // 成功したら入力を応答の title（空白を除いた保存済みの値）にする。入力を応答にそろえるのはここだけ（上の loadedTitle の WHY）。
+    //   失敗したときは入力を残し、直して再送できるようにする。
     if (updated !== null) form.reset({ title: updated.title });
   });
 

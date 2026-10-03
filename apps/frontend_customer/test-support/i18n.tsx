@@ -1,3 +1,4 @@
+import { notifyManager } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import {
   createTranslator,
@@ -16,6 +17,16 @@ import { DesignSystem } from "./design-system";
 // WHY 文言を直書きせずキーの翻訳結果と比べる: テストが見るのは「どのキーの文言を出すか」。言い回しを辞書で変えても
 //   テストを直さずに済む。辞書の中身は、各画面・部品のテストの「en で描く」テストと api-error.test.ts で見る。
 // WHY ロケールを ja に明示する（Provider の既定値に頼らない）: 既定値が変わってもテストの前提が変わらないようにする。
+
+// TanStack Query がキャッシュの変化を hook に知らせる時機を、setTimeout(0)（既定）から microtask に替える（テストの中だけ）。
+// WHY: 既定の setTimeout(0) だと、テストが応答を返した後のどの時点で知らせが届くかがタイマーの順に左右され、知らせの前の値を
+//   見て落ちることがあった（setTimeout(0) を 1 回待つ形で、続けて 12 回の実行のうち 3 回。2026-10-03 実測）。microtask にすると、
+//   知らせは応答の後の microtask の連鎖の中で届くので、テストが setTimeout(0) を 1 回待てば（microtask はタイマーより先にすべて
+//   動く）必ず届いている（hook のテストの actAndFlush）。TanStack Query の文書（notifyManager の setScheduler の例）にある設定。
+// WHY ここ（JaLocale・EnLocale のファイル）に置く: QueryProvider で包むのはこの wrapper なので、包むテストに必ず効く。テストごとに
+//   書くと書き忘れたファイルだけ時機が変わる。本番の時機（setTimeout(0)）は変えない（このファイルは本番から読まれない）。
+// 限界: 知らせの時機が本番と違うので、「知らせが遅れて届く」ことに依存する不具合はテストで見えない。
+notifyManager.setScheduler(queueMicrotask);
 
 // 期待値を組み立てる ja の翻訳。辞書を最初の引数で受け取り、キーと params の型は本番の t と同じ（createTranslator）。
 // WHY 辞書を引数にする: 画面ごとの辞書（*.messages.ts）のどれを引くかをテストに書かせ、別の辞書のキーをコンパイルエラーにする。
