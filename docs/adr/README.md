@@ -103,6 +103,7 @@ ADR は分類ごとのディレクトリに置く。分類は次の 4 つだけ�
 | 2026-10-03 | 依存の自動更新は Renovate（GitHub App）で行い、Dependabot は使わない | 採用 | [20261003-renovate-for-dependency-updates.md](tech-stack/20261003-renovate-for-dependency-updates.md) |
 | 2026-10-03 | Renovate の patch / minor の更新は CI が緑なら自動マージし、メジャーと Next.js / React は人が確かめる | 採用 | [20261003-renovate-automerge-patch-minor.md](tech-stack/20261003-renovate-automerge-patch-minor.md) |
 | 2026-10-03 | frontend のデータ取得は TanStack Query、フォームは React Hook Form + zod にし、React Compiler で手の memo をやめる | 採用 | [20261003-tanstack-query-react-hook-form-react-compiler.md](tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md) |
+| 2026-10-03 | frontend の画面をまたぐクライアントだけの状態は zustand で持ち、store は stores/ の下にだけ置く | 採用 | [20261003-zustand-for-client-shared-state.md](tech-stack/20261003-zustand-for-client-shared-state.md) |
 
 ### quality/
 品質ゲートとテストの方針

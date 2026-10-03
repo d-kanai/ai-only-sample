@@ -43,6 +43,7 @@ SSR でのデータ取得・Server Components での取得・Server Actions は�
 | UI 部品・テーマ | [Mantine](https://mantine.dev/) | Mantine を直接使うのは `shared/ui` だけ（デザインシステム） |
 | データ取得・更新 | [TanStack Query](https://tanstack.com/query) | `useQuery` / `useMutation`。キーと取得の関数は feature の `api/` の `*Queries` に置く（ADR `docs/adr/tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md`） |
 | フォーム | [React Hook Form](https://react-hook-form.com/) + zod（`@hookform/resolvers`） | 値の規則の正は backend。サーバの項目ごとの誤りを入力の下に出す |
+| クライアントの共有状態 | [zustand](https://github.com/pmndrs/zustand) | 画面をまたいで共有するクライアントだけの状態に使う。store は `stores/` の下にだけ置く（ADR `docs/adr/tech-stack/20261003-zustand-for-client-shared-state.md`） |
 | フィーチャーフラグ | [OpenFeature](https://openfeature.dev/) の React SDK + OFREP の web provider | `useFeatureFlag("key")` |
 | i18n | 自前（`shared/i18n`） | ライブラリは使わない（ADR `docs/adr/architecture/20260929-i18n-without-library.md`） |
 | テスト | [Testing Library](https://testing-library.com/)（React・user-event） | hook は `renderHook`、画面は user-event で操作する |

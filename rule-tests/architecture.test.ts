@@ -25,10 +25,12 @@ import {
   isConstructorDeclaration,
   isElementAccessExpression,
   isExportAssignment,
+  isExportDeclaration,
   isFunctionDeclaration,
   isFunctionExpression,
   isGetAccessorDeclaration,
   isIdentifier,
+  isImportDeclaration,
   isIndexSignatureDeclaration,
   isJsxAttribute,
   isJsxExpression,
@@ -36,6 +38,9 @@ import {
   isMethodDeclaration,
   isModuleBlock,
   isModuleDeclaration,
+  isNamedExports,
+  isNamedImports,
+  isNamespaceImport,
   isNonNullExpression,
   isNoSubstitutionTemplateLiteral,
   isParenthesizedExpression,
@@ -680,6 +685,17 @@ function usesPersistence(ref: Reference): boolean {
   return !ref.own && PERSISTENCE_PACKAGES.has(packageName(ref.to));
 }
 
+// 画面で zod を使う入口（規則 frontend-zod-entry）。z.config({ jitless: true }) を設定してから z を export する。
+const ZOD_PACKAGE = "zod";
+const FRONTEND_ZOD_ENTRY_FILE =
+  "apps/frontend_customer/shared/validation/zod.ts";
+
+// zustand の store を置いてよい場所（規則 zustand-in-stores）。shared/stores/ と features/<f>/stores/ の下（入れ子も）。
+//   <f> は 1 階層（features/<f>/screens/stores/ のような feature の中の深い stores/ は不可）。
+const ZUSTAND_PACKAGE = "zustand";
+const ZUSTAND_STORE_FILE =
+  /^apps\/frontend_customer\/(?:shared|features\/[^/]+)\/stores\//;
+
 // backend の api ファイル（1 API = 1 ファイル `apps/backend/features/<f>/internal/presentation/<verb>-<noun>.api.ts`。
 //   backend/shared の HTTP の境界 `apps/backend/shared/http/` の直下の *.api も同じ形として扱う。Issue #98 より前は
 //   `apps/backend/<x>/presentation/`、Issue #208 より前は `apps/backend/features/<f>/presentation/`、Issue #310 より前は shared 側が
@@ -890,7 +906,9 @@ type RuleId =
   | "messages-colocation"
   | "module-internal"
   | "module-expose-only-from-presentation"
-  | "expose-imports";
+  | "expose-imports"
+  | "frontend-zod-entry"
+  | "zustand-in-stores";
 
 type Rule = {
   id: RuleId;
@@ -1266,6 +1284,50 @@ const RULES: Rule[] = [
     name: "apps/backend/features/<f>/expose/ が参照してよい自前コードは、自モジュールの internal/・expose/、apps/backend/shared/、apps/shared/ の env・logger・now だけで（他のモジュールは不可）、next・react も参照しない",
     appliesTo: isExposeFile,
     isViolation: (ref) => usesFramework(ref) || (ref.own && !exposeMayUse(ref)),
+  },
+  {
+    // 「frontend の本番コードが "zod" を直接参照してよいのは apps/frontend_customer/shared/validation/zod.ts だけ」
+    //   （.claude/rules/code/frontend.md の「フォーム」の表）。画面は z を "@/shared/validation/zod" から取る。
+    // WHY: zod 4 は z.object を作るときに new Function("") で eval が使えるかを試す。画面の CSP は script-src に 'unsafe-eval' を
+    //   入れない（shared/security/security-headers.ts）ので、ブラウザはこれを CSP の違反として報告する（E2E の
+    //   apps/e2e/spec/security-headers.feature が落ちた）。shared/validation/zod.ts は z.config({ jitless: true }) で試しを止めてから
+    //   z を渡す。画面のファイルが "zod" を直接 import すると、設定の前にスキーマを作りうる（どちらが先に読み込まれるかは import の
+    //   順で決まる）うえ、設定の入口がどこかがコードから読めなくなる。
+    // WHY サブパス（zod/v4・zod/mini・zod/v4/core）も違反（パッケージ名で比べる）: 同じ zod の別の入口で、設定の済んだ z を通らない。
+    // WHY 型だけ（import type）も違反: 型は z.infer / z.ZodType のように shared/validation/zod の z から取れる。入口を 1 つにそろえ、
+    //   型の import を値の import に書き換えたときに素通りしないようにする。
+    // WHY @hookform/resolvers/zod は可: パッケージ名が @hookform/resolvers で別のもの。zodResolver は渡されたスキーマ（設定の済んだ z で
+    //   作ったもの）を使うだけ。
+    // WHY apps/frontend_customer の外は対象外: backend・apps/shared はサーバで動き、画面の CSP がかからない（backend は入力の検証に
+    //   zod を直接使う。apps/shared は shared-self-contained が "zod" だけを許す）。
+    // WHY 許す場所はファイル 1 つ（パスの完全一致）: 設定を持つのはこのファイルだけで、同じ名前の別の場所（features/<f>/.../zod.ts）や
+    //   拡張子違い（zod.tsx）に入口を増やさせない。
+    // 限界: require("zod") と、埋め込み式のあるテンプレートリテラルの import() は拾わない（抽出の限界。extractImports）。テストは対象外。
+    id: "frontend-zod-entry",
+    name: 'apps/frontend_customer/ の本番コードが "zod"（とサブパス）を参照してよいのは apps/frontend_customer/shared/validation/zod.ts だけ（型だけも違反。@hookform/resolvers/zod は可。テストは除く）',
+    appliesTo: (from) =>
+      isUnder(from, FRONTEND_ROOT) && from !== FRONTEND_ZOD_ENTRY_FILE,
+    isViolation: (ref) => !ref.own && packageName(ref.to) === ZOD_PACKAGE,
+  },
+  {
+    // 「"zustand" を参照してよいのは apps/frontend_customer/shared/stores/ と apps/frontend_customer/features/<f>/stores/ の下だけ」
+    //   （.claude/rules/code/frontend.md の「クライアントの共有状態」の表）。画面・hook は store のファイルが export する hook を使う。
+    // WHY 置き場所を決める: zustand は「画面をまたいで共有するクライアントだけの状態」のためのもの。どこでも create できると、
+    //   サーバのデータ（TanStack Query が持つ）・フォームの値（React Hook Form が持つ）・1 画面の状態（useState）まで store に入り、
+    //   同じ状態の正が 2 つになる。store を決まったディレクトリにだけ置かせると、共有の状態の一覧がディレクトリで読め、
+    //   レビューで「store にしてよい状態か」を見る場所が 1 つになる。
+    // WHY 名前を stores/ にする: feature の中の役割のディレクトリ（api/・hooks/・components/）と同じく複数形の役割名にそろえる。
+    //   features/<f>/stores/ は 1 つの feature の画面をまたぐ状態、shared/stores/ は feature をまたぐ状態の置き場所。
+    // WHY 型だけ（import type）も違反: store の型（StoreApi など）は store のファイルから export して使わせ、zustand への依存を
+    //   stores/ に閉じ込める（後でライブラリを替えるときに stores/ の中だけを直せばよい）。
+    // WHY 参照元を apps/frontend_customer に限らない: backend・apps/shared・apps/e2e/ が zustand を使う理由が無い（サーバに
+    //   クライアントの状態は無い）。どこからでも stores/ の外なら違反にする。
+    // 限界: stores/ の中の状態がその置き場所に合うか（サーバのデータを入れていないか）は見ない（レビュー）。require と埋め込み式のある
+    //   import() は拾わない（抽出の限界）。テストは対象外。
+    id: "zustand-in-stores",
+    name: '"zustand"（とサブパス）を参照してよいのは apps/frontend_customer/shared/stores/ と apps/frontend_customer/features/<f>/stores/ の下のファイルだけ（型だけも違反。テストは除く）',
+    appliesTo: (from) => !ZUSTAND_STORE_FILE.test(from),
+    isViolation: (ref) => !ref.own && packageName(ref.to) === ZUSTAND_PACKAGE,
   },
 ];
 
@@ -2694,6 +2756,170 @@ function findDomainValueObjectViolations(root: string): string[] {
   );
 }
 
+// --- 手の memo を書かない（規則 frontend-no-manual-memo） ---
+// apps/frontend_customer の本番コードで、react の useCallback・useMemo・memo を使ったところを「ファイル:行」で違反にする
+//   （findManualMemos）。拾う形:
+//   - "react" からの名前付きの import（別名 `useMemo as m` も。元の名前で見る）と re-export（`export { memo } from "react"`）。
+//   - react の名前空間の参照 `<名前>.useMemo` / `<名前>["useMemo"]`。<名前> は "react" の default import・namespace import の
+//     ローカル名と、React（import せずに書く UMD のグローバル名）。
+// WHY 規則にする（.claude/rules/code/frontend.md の「メモ化」の表）: next.config.ts の reactCompiler: true で React Compiler が
+//   ビルドのときにメモ化する。手で書くと、依存配列の書き間違い（古い値を使い続ける）と、依存配列の変異が等価になる（Stryker で
+//   除外が要る）ことを抱え、Compiler の最適化とも二重になる。レビューだけでは、以前の書き方（useCallback で包む）が新しいコードに
+//   写されるのを止められない。決定は ADR docs/adr/tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md。
+// WHY 構文木で見る（参照の抽出 extractImports で見ない）: 参照の抽出は specifier だけを持ち、import した名前と、`React.useMemo` の
+//   ような名前空間の参照を持たない。
+// WHY app/・test-support/・直下のファイルも対象: Compiler はアプリの全体（Next のビルドに入る .tsx / .ts）にかかり、手で書く理由が
+//   どこにも無い。test-support/ は本番に入らないが、テストの部品もメモ化の要らない形にそろえる。
+// 限界（見逃す方向）: 分割代入（const { useMemo } = React）、dynamic import()、require、"react" 以外の入口からの中継
+//   （自前のファイルが re-export したものを使う形。中継の re-export そのものは拾う）、`export * from "react"` は拾わない。
+//   テストは対象外。
+// 限界（多く検出する方向）: React という名前の別の値（自前の変数）の .memo なども違反にする（React の名前は react にだけ使う）。
+const FRONTEND_NO_MANUAL_MEMO = {
+  id: "frontend-no-manual-memo",
+  name: 'apps/frontend_customer/ の本番コードは react の useCallback・useMemo・memo を使わない（"react" からの名前付きの import・別名・re-export と、React.useMemo のような名前空間の参照が違反。React Compiler がメモ化する。テストは除く）',
+  appliesTo: (file: string) =>
+    isSourceNonTest(file) && isUnder(file, FRONTEND_ROOT),
+};
+
+const REACT_PACKAGE = "react";
+const MANUAL_MEMO_APIS: ReadonlySet<string> = new Set([
+  "useCallback",
+  "useMemo",
+  "memo",
+]);
+// import しなくても react の名前空間として見る名前（UMD のグローバル）。
+const REACT_GLOBAL_NAME = "React";
+
+// import / export ... from の参照先の文字列（文字列リテラルでなければ undefined）。
+function moduleSpecifierOf(node: Node): string | undefined {
+  const specifier = (node as { moduleSpecifier?: Node }).moduleSpecifier;
+  return specifier !== undefined && isStringLiteral(specifier)
+    ? specifier.text
+    : undefined;
+}
+
+// import / export の指定子（ImportSpecifier・ExportSpecifier）の元の名前（as の前）。
+function importedNameOf(specifier: Node): string {
+  const { propertyName, name } = specifier as unknown as {
+    propertyName?: Node;
+    name: Node;
+  };
+  const original = propertyName ?? name;
+  return isIdentifier(original) || isStringLiteral(original)
+    ? original.text
+    : "";
+}
+
+// "react" からの 1 つの文の、名前付きの import / re-export の指定子と、default / namespace import のローカル名。
+function reactBindingsOf(statement: Node): {
+  specifiers: readonly Node[];
+  names: string[];
+} {
+  if (isExportDeclaration(statement)) {
+    const clause = statement.exportClause;
+    return {
+      specifiers:
+        clause !== undefined && isNamedExports(clause) ? clause.elements : [],
+      names: [],
+    };
+  }
+  if (!isImportDeclaration(statement)) {
+    return { specifiers: [], names: [] };
+  }
+  const clause = statement.importClause;
+  const bindings = clause?.namedBindings;
+  return {
+    specifiers:
+      bindings !== undefined && isNamedImports(bindings)
+        ? bindings.elements
+        : [],
+    names: [
+      ...(clause?.name !== undefined ? [clause.name.text] : []),
+      ...(bindings !== undefined && isNamespaceImport(bindings)
+        ? [bindings.name.text]
+        : []),
+    ],
+  };
+}
+
+// "react" の名前付きの import と re-export のうち MANUAL_MEMO_APIS の指定子と、react の名前空間として見る名前
+//   （"react" の default / namespace import のローカル名と REACT_GLOBAL_NAME）。
+function reactImportsOf(sourceFile: SourceFile): {
+  memoSpecifiers: Node[];
+  namespaces: Set<string>;
+} {
+  const bindings = sourceFile.statements
+    .filter((statement) => moduleSpecifierOf(statement) === REACT_PACKAGE)
+    .map(reactBindingsOf);
+  return {
+    memoSpecifiers: bindings
+      .flatMap(({ specifiers }) => specifiers)
+      .filter((specifier) => MANUAL_MEMO_APIS.has(importedNameOf(specifier))),
+    namespaces: new Set([
+      REACT_GLOBAL_NAME,
+      ...bindings.flatMap(({ names }) => names),
+    ]),
+  };
+}
+
+// 名前空間の参照（React.useMemo・React["useMemo"]）のうち、MANUAL_MEMO_APIS を指すものか。
+function isNamespaceMemoAccess(node: Node, namespaces: Set<string>): boolean {
+  if (isPropertyAccessExpression(node)) {
+    return (
+      isIdentifier(node.expression) &&
+      namespaces.has(node.expression.text) &&
+      isIdentifier(node.name) &&
+      MANUAL_MEMO_APIS.has(node.name.text)
+    );
+  }
+  if (isElementAccessExpression(node)) {
+    return (
+      isIdentifier(node.expression) &&
+      namespaces.has(node.expression.text) &&
+      isStringLiteral(node.argumentExpression) &&
+      MANUAL_MEMO_APIS.has(node.argumentExpression.text)
+    );
+  }
+  return false;
+}
+
+// 手の memo を使ったところの行番号（昇順。同じ行に 2 つあれば 2 件）。
+function findManualMemos(sourceFile: SourceFile): number[] {
+  const { memoSpecifiers, namespaces } = reactImportsOf(sourceFile);
+  const found = memoSpecifiers.map((specifier) =>
+    lineOf(sourceFile, specifier),
+  );
+  const visit = (node: Node): void => {
+    if (isNamespaceMemoAccess(node, namespaces)) {
+      found.push(lineOf(sourceFile, node));
+    }
+    node.forEachChild(visit);
+  };
+  visit(sourceFile);
+  return found.sort((a, b) => a - b);
+}
+
+function listManualMemoCheckedFiles(root: string): string[] {
+  return listSourceFiles(root, FRONTEND_ROOT).filter(
+    FRONTEND_NO_MANUAL_MEMO.appliesTo,
+  );
+}
+
+// 「ファイル:行」の一覧。
+function findManualMemoViolations(root: string): string[] {
+  const files = listManualMemoCheckedFiles(root);
+  const sourceFiles = parseSourceFiles(
+    Object.fromEntries(
+      files.map((file) => [file, readFileSync(join(root, file), "utf8")]),
+    ),
+  );
+  return files.flatMap((file) =>
+    findManualMemos(sourceFiles.get(file) as SourceFile).map(
+      (line) => `${file}:${line}`,
+    ),
+  );
+}
+
 // --- workspace パッケージの exports（規則 backend-exports。Issue #68 の段階 2。規則 shared-exports。Issue #90） ---
 // exports は、@repo/backend・@repo/shared として外（そのパッケージのディレクトリの外）に公開するファイルの一覧。
 //   ユーザー判断で、全ファイル（"./*"）ではなく、外が使う入口だけを明示する（.claude/rules/code/backend.md の「import と exports」の表の「exports」、.claude/rules/code/shared.md）。
@@ -2890,6 +3116,7 @@ function findViolations(references: Reference[], rule: Rule): string[] {
 //   backend と apps/shared の本番コードとテストの補助の最上位の関数も「class-based: ファイル:行」を関数ごとに 1 行で出す。
 //   インスタンスで使うクラスの static メンバーも「no-static-in-instance-class: ファイル:行」をメンバーごとに 1 行で出す。
 //   domain のクラスの primitive のフィールドも「domain-value-object: ファイル:行」をフィールドごとに 1 行で出す。
+//   frontend の手の memo も「frontend-no-manual-memo: ファイル:行」を使ったところごとに 1 行で出す。
 //   exports の違反は「backend-exports: ...」「shared-exports: ...」の 1 行で出す（findExportsViolations）。
 //   apps/shared の置き場所の違反は「shared-placement: ファイル」の 1 行で出す（ソース以外も含め、apps/shared の全ファイルを見る）。
 // WHY 置き場所の規則も参照を取り出すファイル（listReferencingFiles。apps/e2e/ とリポジトリ直下を含む）全体にかける:
@@ -2940,6 +3167,9 @@ function collectViolations(root: string): string[] {
     ...findDomainValueObjectViolations(root).map(
       (line) => `${DOMAIN_VALUE_OBJECT.id}: ${line}`,
     ),
+    ...findManualMemoViolations(root).map(
+      (line) => `${FRONTEND_NO_MANUAL_MEMO.id}: ${line}`,
+    ),
     ...listAllFiles(root, SHARED_ROOT)
       .filter(SHARED_PLACEMENT.isMisplaced)
       .map((file) => `${SHARED_PLACEMENT.id}: ${file}`),
@@ -2962,6 +3192,10 @@ type Example = [
   specifier: string,
   kind: "value" | "type" | "re-export" | "constant",
 ];
+
+// 規則 frontend-zod-entry・zustand-in-stores の判定の例の参照元（画面の hook）。
+const SCREEN_HOOK_FILE =
+  "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.hook.ts";
 
 const RULE_EXAMPLES: Record<
   RuleId,
@@ -4948,6 +5182,109 @@ const RULE_EXAMPLES: Record<
         "@repo/backend/shared/http/health.api",
         "value",
       ],
+    ],
+  },
+  "frontend-zod-entry": {
+    violating: [
+      // 画面の hook・部品・app/・test-support/・直下のファイルからの "zod"（値・型だけ・re-export）。
+      [SCREEN_HOOK_FILE, "zod", "value"],
+      [SCREEN_HOOK_FILE, "zod", "type"],
+      [
+        "apps/frontend_customer/shared/validation/schema.ts",
+        "zod",
+        "re-export",
+      ],
+      ["apps/frontend_customer/app/page.tsx", "zod", "value"],
+      ["apps/frontend_customer/test-support/i18n.tsx", "zod", "value"],
+      ["apps/frontend_customer/proxy.ts", "zod", "value"],
+      // サブパス（別の入口）。
+      ["apps/frontend_customer/shared/i18n/i18n.tsx", "zod/v4", "value"],
+      [SCREEN_HOOK_FILE, "zod/mini", "type"],
+      [SCREEN_HOOK_FILE, "zod/v4/core", "value"],
+      // 入口と同じ名前の別の場所・拡張子違いは入口にしない。
+      ["apps/frontend_customer/shared/validation/zod.tsx", "zod", "value"],
+      [
+        "apps/frontend_customer/features/todo/shared/validation/zod.ts",
+        "zod",
+        "value",
+      ],
+    ],
+    allowed: [
+      // 入口のファイルそのもの。
+      [FRONTEND_ZOD_ENTRY_FILE, "zod", "value"],
+      // 画面は入口から z を取り、zodResolver は @hookform/resolvers のサブパス（別のパッケージ）。
+      [SCREEN_HOOK_FILE, "@/shared/validation/zod", "value"],
+      [SCREEN_HOOK_FILE, "@hookform/resolvers/zod", "value"],
+      // 名前の前方一致だけが同じ別のパッケージ・自前のコードの zod という名前のファイル。
+      [SCREEN_HOOK_FILE, "zodiac", "value"],
+      [SCREEN_HOOK_FILE, "zod-validation-error", "value"],
+      ["apps/frontend_customer/shared/validation/other.ts", "./zod", "value"],
+      // apps/frontend_customer の外（サーバで動き、画面の CSP がかからない）。
+      [
+        "apps/backend/features/todo/internal/domain/todo-title.ts",
+        "zod",
+        "value",
+      ],
+      ["apps/shared/log-event.ts", "zod", "value"],
+      ["apps/e2e/support/x.ts", "zod", "value"],
+    ],
+  },
+  "zustand-in-stores": {
+    violating: [
+      // stores/ の外の画面・hook・部品・app/（値・型だけ・re-export・サブパス）。
+      [SCREEN_HOOK_FILE, "zustand", "value"],
+      [
+        "apps/frontend_customer/features/todo/hooks/use-filter.hook.ts",
+        "zustand",
+        "type",
+      ],
+      [
+        "apps/frontend_customer/features/todo/components/filter.tsx",
+        "zustand/middleware",
+        "value",
+      ],
+      ["apps/frontend_customer/app/layout.tsx", "zustand/vanilla", "re-export"],
+      // 置き場所の取り違え: 単数形・前方一致だけが同じ別ディレクトリ・frontend 直下の stores/・features/ 直下の stores/・
+      //   feature の中の深い stores/。
+      ["apps/frontend_customer/shared/store/ui-store.ts", "zustand", "value"],
+      [
+        "apps/frontend_customer/shared/stores-x/ui-store.ts",
+        "zustand",
+        "value",
+      ],
+      ["apps/frontend_customer/stores/ui-store.ts", "zustand", "value"],
+      [
+        "apps/frontend_customer/features/stores/ui-store.ts",
+        "zustand",
+        "value",
+      ],
+      [
+        "apps/frontend_customer/features/todo/screens/stores/x.ts",
+        "zustand",
+        "value",
+      ],
+      // apps/frontend_customer の外（サーバにクライアントの状態は無い）。
+      ["apps/backend/shared/http/x.ts", "zustand", "value"],
+      ["apps/e2e/support/x.ts", "zustand", "value"],
+    ],
+    allowed: [
+      // shared/stores/ と features/<f>/stores/ の下（入れ子も。値・型だけ・サブパス）。
+      ["apps/frontend_customer/shared/stores/ui-store.ts", "zustand", "value"],
+      [
+        "apps/frontend_customer/features/todo/stores/filter-store.ts",
+        "zustand/middleware",
+        "value",
+      ],
+      [
+        "apps/frontend_customer/features/todo/stores/nested/x.ts",
+        "zustand/vanilla",
+        "type",
+      ],
+      // 画面は store のファイルが export する hook を使う。
+      [SCREEN_HOOK_FILE, "@/features/todo/stores/filter-store", "value"],
+      [SCREEN_HOOK_FILE, "@/shared/stores/ui-store", "value"],
+      // 名前の前方一致だけが同じ別のパッケージ。
+      [SCREEN_HOOK_FILE, "zustand-x", "value"],
     ],
   },
 };
@@ -7303,6 +7640,141 @@ function judgeDomainValueObject(examples: [string, string][]): boolean[] {
   });
 }
 
+// 規則 frontend-no-manual-memo の判定の例。違反例は 1 例 1 つの書き方にする。
+const FRONTEND_COMPONENT_FILE =
+  "apps/frontend_customer/features/todo/components/x.tsx";
+const MANUAL_MEMO_EXAMPLES: {
+  violating: [file: string, source: string][];
+  allowed: [file: string, source: string][];
+} = {
+  violating: [
+    // 0〜2: 名前付きの import（3 つの API それぞれ）。
+    [SCREEN_HOOK_FILE, 'import { useMemo } from "react";'],
+    [
+      "apps/frontend_customer/shared/query/x.tsx",
+      'import { useCallback } from "react";',
+    ],
+    [FRONTEND_COMPONENT_FILE, 'import { memo } from "react";'],
+    // 3: 別名（元の名前で見る）。
+    [FRONTEND_COMPONENT_FILE, 'import { useMemo as cached } from "react";'],
+    // 4: ほかの名前・型と並べた複数行の import。
+    [
+      FRONTEND_COMPONENT_FILE,
+      lines(
+        "import {",
+        "  type ReactNode,",
+        "  useCallback,",
+        "  useState,",
+        '} from "react";',
+      ),
+    ],
+    // 5: default import の名前空間の参照。
+    [
+      FRONTEND_COMPONENT_FILE,
+      lines(
+        'import R from "react";',
+        "export const A = () => R.useMemo(() => 1, []);",
+      ),
+    ],
+    // 6: namespace import の名前空間の参照。
+    [
+      FRONTEND_COMPONENT_FILE,
+      lines(
+        'import * as Re from "react";',
+        "export const B = Re.memo(() => null);",
+      ),
+    ],
+    // 7: import せずに書く React（UMD のグローバル名）。
+    [
+      FRONTEND_COMPONENT_FILE,
+      "export const C = () => React.useCallback(() => 1, []);",
+    ],
+    // 8: 要素の参照（React["useMemo"]）。
+    [
+      FRONTEND_COMPONENT_FILE,
+      'export const D = () => React["useMemo"](() => 1, []);',
+    ],
+    // 9〜10: re-export（別名も）。
+    ["apps/frontend_customer/shared/x.ts", 'export { memo } from "react";'],
+    [
+      "apps/frontend_customer/shared/x.ts",
+      'export { useMemo as m } from "react";',
+    ],
+    // 11: 文字列の名前の import。
+    [FRONTEND_COMPONENT_FILE, 'import { "memo" as m } from "react";'],
+    // 12〜15: app/・test-support/・直下のファイル・JS と ESM の拡張子も対象。
+    [
+      "apps/frontend_customer/app/layout.tsx",
+      'import { useMemo } from "react";',
+    ],
+    [
+      "apps/frontend_customer/test-support/x.tsx",
+      'import { memo } from "react";',
+    ],
+    ["apps/frontend_customer/proxy.ts", 'import { useCallback } from "react";'],
+    ["apps/frontend_customer/shared/x.mjs", 'import { useMemo } from "react";'],
+  ],
+  allowed: [
+    // ほかの react の hook・型。
+    [
+      FRONTEND_COMPONENT_FILE,
+      lines(
+        'import React, { type ReactNode, useState } from "react";',
+        "export const A = () => React.useState(0);",
+      ),
+    ],
+    [
+      FRONTEND_COMPONENT_FILE,
+      'import type { MemoExoticComponent } from "react";',
+    ],
+    // "react" 以外の入口からの同じ名前（自前のファイル・別のパッケージ）。
+    [FRONTEND_COMPONENT_FILE, 'import { useMemo } from "./cache";'],
+    [FRONTEND_COMPONENT_FILE, 'import { memo } from "react-dom";'],
+    // react の名前空間でない値の .memo、ローカルの名前。
+    [
+      FRONTEND_COMPONENT_FILE,
+      lines(
+        "const cache = { memo: (x: number) => x };",
+        "export const B = () => cache.memo(1);",
+        "export function memo(): void {}",
+      ),
+    ],
+    // コメントと文字列の中。
+    [
+      FRONTEND_COMPONENT_FILE,
+      lines(
+        '// useMemo を書かない（import { useMemo } from "react"）',
+        'export const s = "React.useCallback";',
+      ),
+    ],
+    // テストと apps/frontend_customer の外は対象外。
+    [
+      "apps/frontend_customer/features/todo/components/x.test.tsx",
+      'import { useMemo } from "react";',
+    ],
+    ["apps/e2e/support/x.ts", 'import { useMemo } from "react";'],
+    ["apps/frontend_customer-x/x.tsx", 'import { useMemo } from "react";'],
+  ],
+};
+
+// 例をまとめて 1 回で構文解析し、例ごとに違反か（true）を返す。対象外のファイルは解析せずに false。
+function judgeManualMemo(examples: [string, string][]): boolean[] {
+  const virtualPath = (i: number, file: string) => `example-${i}/${file}`;
+  const sourceFiles = parseSourceFiles(
+    Object.fromEntries(
+      examples.flatMap(([file, source], i) =>
+        FRONTEND_NO_MANUAL_MEMO.appliesTo(file)
+          ? [[virtualPath(i, file), source]]
+          : [],
+      ),
+    ),
+  );
+  return examples.map(([file], i) => {
+    const sourceFile = sourceFiles.get(virtualPath(i, file));
+    return sourceFile !== undefined && findManualMemos(sourceFile).length > 0;
+  });
+}
+
 // --- exports の判定（BACKEND_EXPORTS・SHARED_EXPORTS）の仕様 ---
 // 参照 1 件ごとではなく、exports の中身と参照の集まりで決まるので、RULES の外で例を持つ。
 
@@ -7380,7 +7852,7 @@ function violationsOfFixture(files: Record<string, string>): string[] {
 // apps/shared の許可 SHARED_MODULES_BY_LAYER）の違反も置く。
 // ハードコードの文言の規則（FRONTEND_HARDCODED_TEXT・SERVER_HARDCODED_TEXT。Issue #116）と、辞書の置き場所の規則
 // （messages-colocation。Issue #125）の違反も置く。
-// 規則は全部で 40（RULES の 24 + 置き場所 3 + 環境変数の直参照 + console + 現在時刻の読み取り + exports 2 + ハードコードの文言 2 + handle を ProblemResponse.wrap で包む 1 + handle の中の try / catch 1 + ProblemResponse.from の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1 + domain の値の VO 1）。Issue #68 で RULES に 3 規則（backend-to-frontend・
+// 規則は全部で 43（RULES の 26 + 置き場所 3 + 環境変数の直参照 + console + 現在時刻の読み取り + exports 2 + ハードコードの文言 2 + handle を ProblemResponse.wrap で包む 1 + handle の中の try / catch 1 + ProblemResponse.from の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1 + domain の値の VO 1 + 手の memo 1）。Issue #68 で RULES に 3 規則（backend-to-frontend・
 // backend-relative-only・frontend-root-to-backend）を足し、段階 2 で frontend-to-backend-specifier と BACKEND_EXPORTS を足した。
 // Issue #90 で frontend-to-shared-specifier・screen-to-shared・shared-self-contained・SHARED_PLACEMENT・SHARED_EXPORTS を足した。
 // Issue #141 で presentation-with-problem-response（PRESENTATION_WITH_PROBLEM_RESPONSE）を足した。
@@ -7388,6 +7860,7 @@ function violationsOfFixture(files: Record<string, string>): string[] {
 // Issue #262 で class-based（CLASS_BASED。最上位の関数）を足した。
 // Issue #300 で no-static-in-instance-class（NO_STATIC_IN_INSTANCE_CLASS。インスタンスで使うクラスの static）を足した。
 // Issue #423 で domain-value-object（DOMAIN_VALUE_OBJECT。domain のクラスの primitive のフィールド）を足した。
+// Issue #452 で frontend-zod-entry・zustand-in-stores（RULES）と frontend-no-manual-memo（FRONTEND_NO_MANUAL_MEMO。手の memo）を足した。
 // Issue #332 で handle-without-try-catch（HANDLE_WITHOUT_TRY_CATCH）と problem-response-from-only-in-problem
 //   （PROBLEM_RESPONSE_FROM_ONLY_IN_PROBLEM）を足した。
 const MUST_REJECT_FILES: Record<string, string> = {
@@ -8200,12 +8673,56 @@ const MUST_REJECT_FILES: Record<string, string> = {
   ),
   "apps/backend/features/feature-flag/internal/domain/sub/bad-primitive.mts":
     lines("export class Bad { readonly key: string = ''; }"),
+  // frontend-no-manual-memo（Issue #452）: "react" の名前付きの import（ほかの名前と並べたもの・複数行の別名）、re-export、
+  //   default import と namespace import の名前空間の参照（1・4・6・7・8 行目）。useState（9 行目）は拾わない。.mts も対象。
+  "apps/frontend_customer/features/todo/components/bad-memo.tsx": lines(
+    'import React, { useMemo, useState } from "react";',
+    'import * as R from "react";',
+    "import {",
+    "  useCallback as cb,",
+    '} from "react";',
+    'export { memo } from "react";',
+    "export const A = R.memo(() => null);",
+    "export const B = () => React.useMemo(() => 1, []);",
+    "export const C = () => useState(0);",
+  ),
+  "apps/frontend_customer/shared/bad-memo.mts": lines(
+    'import { useCallback } from "react";',
+  ),
+  // frontend-zod-entry（Issue #452）: 入口の外からの "zod"（値・型だけ・サブパスの re-export）。
+  "apps/frontend_customer/features/todo/components/bad-zod.ts": lines(
+    'import { z } from "zod";',
+    'import type { ZodType } from "zod/v4";',
+    'export { z as zz } from "zod/mini";',
+  ),
+  // zustand-in-stores（Issue #452）: stores/ の外の hook と、前方一致だけが同じ別ディレクトリ（型だけも）、backend。
+  "apps/frontend_customer/features/todo/hooks/bad-store.hook.ts": lines(
+    'import { create } from "zustand";',
+  ),
+  "apps/frontend_customer/shared/stores-x/bad-store.ts": lines(
+    'import type { StoreApi } from "zustand/vanilla";',
+  ),
+  "apps/backend/shared/http/bad-zustand.ts": lines(
+    'import { create } from "zustand";',
+  ),
   // backend-placement / frontend-placement（Issue #181）: 直下の test-support/ と前方一致だけが同じ別ディレクトリ。
   "apps/backend/test-support-x/x.ts": lines("export const x = 1;"),
   "apps/frontend_customer/test-support-x/x.ts": lines("export const x = 1;"),
 };
 
 const MUST_REJECT_VIOLATIONS = [
+  ...[1, 4, 6, 7, 8].map(
+    (line) =>
+      `frontend-no-manual-memo: apps/frontend_customer/features/todo/components/bad-memo.tsx:${line}`,
+  ),
+  "frontend-no-manual-memo: apps/frontend_customer/shared/bad-memo.mts:1",
+  ...["zod", "zod/v4", "zod/mini"].map(
+    (to) =>
+      `frontend-zod-entry: apps/frontend_customer/features/todo/components/bad-zod.ts → ${to}`,
+  ),
+  "zustand-in-stores: apps/frontend_customer/features/todo/hooks/bad-store.hook.ts → zustand",
+  "zustand-in-stores: apps/frontend_customer/shared/stores-x/bad-store.ts → zustand/vanilla",
+  "zustand-in-stores: apps/backend/shared/http/bad-zustand.ts → zustand",
   ...[1, 2, 3, 4, 5, 6, 7, 14].map(
     (line) => `class-based: apps/backend/shared/error/bad-function.ts:${line}`,
   ),
@@ -8721,6 +9238,42 @@ const MUST_REJECT_VIOLATIONS = [
 // （`git grep -h "from \"" -- '*.ts' '*.tsx'` で列挙したもの）をすべて含め、alias と相対の両方を置く。
 // コメント・文字列の中の import 風の文字列、from の無い `export type {...};`、テストファイル・TS 以外のファイルも置く。
 const MUST_PASS_FILES: Record<string, string> = {
+  // frontend-no-manual-memo・frontend-zod-entry・zustand-in-stores（Issue #452）: 入口の zod.ts、入口から z を取る hook と
+  //   zodResolver、stores/ の下の store（サブパス・型だけも）と、それを使う hook、react のほかの hook、react の名前空間でない .memo、
+  //   コメントと文字列の中。テスト（*.test.tsx）は対象外。
+  "apps/frontend_customer/shared/validation/zod.ts": lines(
+    'import { z } from "zod";',
+    "z.config({ jitless: true });",
+    "export { z };",
+  ),
+  "apps/frontend_customer/features/todo/hooks/good-form.hook.ts": lines(
+    'import { zodResolver } from "@hookform/resolvers/zod";',
+    'import { useState } from "react";',
+    'import { useFilter } from "@/features/todo/stores/filter-store";',
+    'import { z } from "@/shared/validation/zod";',
+    "export const useGoodForm = () => [zodResolver(z.object({})), useState(0), useFilter()];",
+  ),
+  "apps/frontend_customer/features/todo/stores/filter-store.ts": lines(
+    'import { create } from "zustand";',
+    'import { persist } from "zustand/middleware";',
+    'export const useFilter = create(persist(() => ({ done: false }), { name: "filter" }));',
+  ),
+  "apps/frontend_customer/shared/stores/ui-store.ts": lines(
+    'import type { StoreApi } from "zustand";',
+    "export type UiStore = StoreApi<number>;",
+  ),
+  "apps/frontend_customer/features/todo/components/good-memo.tsx": lines(
+    '// useMemo を書かない（import { useMemo } from "react"）',
+    'import React, { useState } from "react";',
+    "const cache = { memo: (x: number) => x };",
+    'export const s = "React.useCallback";',
+    "export const A = () => cache.memo(React.useState(useState(0)[0])[0]);",
+  ),
+  "apps/frontend_customer/features/todo/components/good-memo.test.tsx": lines(
+    'import { useMemo } from "react";',
+    'import { z } from "zod";',
+    'import { create } from "zustand";',
+  ),
   // class-based（Issue #262）: static だけのクラス・クラスフィールドのアロー関数・メソッドの中の関数・クラス式・
   //   型と interface・定数のオブジェクト・コメントと文字列の中の function。テスト（test-support/ の中のテストも）と
   //   E2E のテスト（*.spec.ts）の関数は対象外（apps/shared のクラスは下の now-single-source の apps/shared/now.ts、
@@ -8903,7 +9456,7 @@ const MUST_PASS_FILES: Record<string, string> = {
     ),
   "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.hook.ts":
     lines(
-      'import { useCallback, useEffect, useRef, useState } from "react";',
+      'import { useEffect, useRef, useState } from "react";',
       'import type { todoScreenMessages } from "@/features/todo/screens/todo-screen/todo-screen.messages";',
       "import {",
       "  TodoApi,",
@@ -8918,7 +9471,7 @@ const MUST_PASS_FILES: Record<string, string> = {
     ),
   "apps/frontend_customer/features/todo/screens/todo-detail-screen/todo-detail-screen.hook.ts":
     lines(
-      'import { useCallback, useEffect, useRef, useState } from "react";',
+      'import { useEffect, useRef, useState } from "react";',
       "import {",
       "  TodoApi,",
       "  type Todo,",
@@ -9804,6 +10357,41 @@ describeFeature(feature, ({ Scenario }) => {
           files.filter(
             (file) =>
               TEST_FILE.test(file) || !file.includes("/internal/domain/"),
+          ),
+        ).toEqual([]);
+      },
+    );
+
+    And(ruleStepText(FRONTEND_NO_MANUAL_MEMO.name), () => {
+      // given: 前提なし
+      // when
+      const violations = findManualMemoViolations(repoRoot);
+
+      // then
+      // 失敗時に「ファイル:行」が出るよう、一覧を空配列と比較する。
+      expect(violations).toEqual([]);
+    });
+
+    // WHY 本物のファイルが列挙に入っていることを見る: 列挙（パスの判定）が壊れて 0 件になると、違反も 0 件で常に緑になる。
+    And(
+      "手の memo の規則は、apps/frontend_customer の本番コード（画面の hook・Provider・app/ の layout・test-support/）を対象にし、テストと apps/frontend_customer の外は対象にしない（列挙が壊れて素通りするのを防ぐ）",
+      () => {
+        // given: 前提なし
+        // when
+        const files = listManualMemoCheckedFiles(repoRoot);
+
+        // then
+        expect(files).toEqual(
+          expect.arrayContaining([
+            "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.hook.ts",
+            "apps/frontend_customer/shared/query/query-provider.tsx",
+            "apps/frontend_customer/app/layout.tsx",
+            "apps/frontend_customer/test-support/i18n.tsx",
+          ]),
+        );
+        expect(
+          files.filter(
+            (file) => TEST_FILE.test(file) || !isUnder(file, FRONTEND_ROOT),
           ),
         ).toEqual([]);
       },
@@ -11137,6 +11725,51 @@ describeFeature(feature, ({ Scenario }) => {
       );
       And(
         "許可例（DOMAIN_VALUE_OBJECT_EXAMPLES.allowed）はどれも違反にならない",
+        () => {
+          // given
+          const cases = allowed.map(([file], i): [string, number] => [
+            `許可例 ${i}（${file}）`,
+            i,
+          ]);
+
+          // when
+          const result = casesByName(cases, ([, i]) => verdictsOf().allowed[i]);
+
+          // then
+          expect(result).toEqual(casesByName(cases, () => false));
+        },
+      );
+    },
+  );
+
+  Scenario(
+    `手の memo を書かない規則の判定（${FRONTEND_NO_MANUAL_MEMO.id}）`,
+    ({ And }) => {
+      const { violating, allowed } = MANUAL_MEMO_EXAMPLES;
+      // WHY 遅延して 1 回だけ判定する: 例ごとに tsgo を起動すると遅いため（domain-value-object の判定と同じ）。
+      let verdicts: { violating: boolean[]; allowed: boolean[] } | undefined;
+      const verdictsOf = () => {
+        verdicts ??= {
+          violating: judgeManualMemo(violating),
+          allowed: judgeManualMemo(allowed),
+        };
+        return verdicts;
+      };
+      And("違反例（MANUAL_MEMO_EXAMPLES.violating）はすべて違反になる", () => {
+        // given
+        const cases = violating.map(([file], i): [string, number] => [
+          `違反例 ${i}（${file}）`,
+          i,
+        ]);
+
+        // when
+        const result = casesByName(cases, ([, i]) => verdictsOf().violating[i]);
+
+        // then
+        expect(result).toEqual(casesByName(cases, () => true));
+      });
+      And(
+        "許可例（MANUAL_MEMO_EXAMPLES.allowed）はどれも違反にならない",
         () => {
           // given
           const cases = allowed.map(([file], i): [string, number] => [
