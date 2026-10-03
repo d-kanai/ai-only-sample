@@ -45,6 +45,8 @@ Feature: ディレクトリ構成ルール（依存の向き）
     * ProblemResponse.from の規則は、本物の api ファイル 8 本を対象にし、problem.ts とテストは対象にしない（列挙が壊れて素通りするのを防ぐ）
     * apps/backend と apps/shared の本番コードとテストの補助（apps/backend の test-support/・spec/ の support.ts、apps/e2e の <名前>.spec.<名前> 以外）と apps/frontend_customer の features/・shared/・test-support/ の React 以外のモジュール（<名前>.tsx・<名前>.jsx・<名前>.hook.<名前> 以外）はファイルの最上位に関数を置かない（テストと E2E の <名前>.spec.<名前>、frontend の app/ と直下のファイルは除く。function 宣言・関数を入れた変数・export default の関数は違反。クラスのメソッド・クラスフィールドのアロー関数・メソッドの中の関数は可）
     * 規則 class-based の対象のファイルでは、インスタンスのメンバー（コンストラクタ・static でないメソッド・フィールド・アクセサ）を持つクラスに static のメンバーを置かない（自分のクラスか Promise<自分のクラス> を返す static のファクトリは可。static だけのクラスは対象外）
+    * apps/backend/features/<f>/internal/domain/ のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）は、型注釈に string・number・bigint を含まない（string[]・string | undefined などの合成も違反。値は VO のクラスにする。VO が中身を持つ名前 value のフィールドは可。boolean・Date・ほかのクラスや型の参照は可。テストは除く）
+    * domain の値を VO にする規則は、apps/backend/features/<f>/internal/domain/ の本番コード（todo.ts・feature-flags.ts）を対象にし、テストと domain の外は対象にしない（列挙が壊れて素通りするのを防ぐ）
     * 最上位に関数を置かない規則は、apps/backend の本番コード（層・expose・drizzle.config.ts）・apps/shared の本番コード・テストの補助（test-support/・spec/ の support.ts・apps/e2e/ の spec 以外）・frontend の React 以外のモジュール（features/・shared/ の .ts）を対象にし、テスト・E2E の .spec.ts・リポジトリ直下・frontend の .tsx・.hook.ts・app/・直下のファイルは対象にしない（列挙が壊れて素通りするのを防ぐ）
     * apps/backend/package.json の exports は、外（apps/frontend_customer・apps/e2e/・リポジトリ直下）が "@repo/backend/..." で参照するものをすべて含み、参照されないキーを持たず、各キーはそのパスの .ts を指す
     * apps/shared/package.json の exports は、外（apps/frontend_customer・apps/backend・apps/e2e/・リポジトリ直下）が "@repo/shared/..." で参照するものをすべて含み、参照されないキーを持たず、各キーはそのパスの .ts を指す
@@ -121,6 +123,9 @@ Feature: ディレクトリ構成ルール（依存の向き）
   Scenario: インスタンスで使うクラスに static を置かない規則の判定（no-static-in-instance-class）
     * 違反例（NO_STATIC_IN_INSTANCE_CLASS_EXAMPLES.violating）はすべて違反になる
     * 許可例（NO_STATIC_IN_INSTANCE_CLASS_EXAMPLES.allowed）はどれも違反にならない
+  Scenario: domain のクラスのフィールドに primitive を置かない規則の判定（domain-value-object）
+    * 違反例（DOMAIN_VALUE_OBJECT_EXAMPLES.violating）はすべて違反になる
+    * 許可例（DOMAIN_VALUE_OBJECT_EXAMPLES.allowed）はどれも違反にならない
   Scenario: 最上位の関数の抽出（findTopLevelFunctions）
     * 最上位の関数ごとに宣言の書き出しの行番号を返す（オーバーロードは宣言ごと、1 つの文の変数は関数のものだけ、クラスの中は返さない）
   Scenario: 規則ごとの判定

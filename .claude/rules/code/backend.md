@@ -164,7 +164,7 @@ paths:
 | リクエスト | 未知のキーは拒否する（`z.strictObject`） | 項目名を打ち間違えた本文や別の API の項目（`/title` に `completed`）を黙って捨てると、送った変更が反映されないまま成功する。画面と API は同時に変えるので互換性の心配は無い | レビュー |
 | リクエスト | 動的セグメントの `id` は `z.uuid()` で確かめ、形が違えば 404（`not_found`。無い Todo と同じ契約）。本文より先に確かめる | - | レビュー |
 | リクエスト | `z.uuid()` は RFC 9562 の形（版の桁 1〜8、variant 8 / 9 / a / b、nil と max）だけを受け付け、大文字も通す（Postgres の uuid 型より狭く、版の桁が 0 の値は拒否する。Todo の id は `randomUUID`（v4）なので影響しない） | zod 4.6.5 の実測（2026-09-29）。広い `z.guid()` は採らなかった | 説明 |
-| domain | 値の中身の規則（例: `title` は前後の空白を除いて 1〜`TODO_TITLE_MAX_LENGTH`（100）文字。文字数はコードポイント数で、zod の `.min` / `.max`（`String#length`）は使わない）の正は domain の zod スキーマ（`todo.ts` の `todoPropsSchema` の `title`）。`Todo` のコンストラクタがそれで検証し、違反は `DomainError("validation_error", key, params)` → 400（`errors` は付かない。presentation で重ねた規則は先に presentation の `errors` 付きの 400 になる） | zod 4.6.5 の実測（2026-09-29）: `.min` / `.max` は `String#length` なのでコードポイント数は `refine` と `Array.from` で数える（`"🍎".repeat(100)` は length 200） | レビュー |
+| domain | 値の中身の規則（例: `title` は前後の空白を除いて 1〜`TODO_TITLE_MAX_LENGTH`（100）文字。文字数はコードポイント数で、zod の `.min` / `.max`（`String#length`）は使わない）の正は domain の VO の zod スキーマ（`todo-title.ts` の `TodoTitle`）。`TodoTitle` のコンストラクタがそれで検証し、違反は `DomainError("validation_error", key, params)` → 400（`errors` は付かない。presentation で重ねた規則は先に presentation の `errors` 付きの 400 になる） | zod 4.6.5 の実測（2026-09-29）: `.min` / `.max` は `String#length` なのでコードポイント数は `refine` と `Array.from` で数える（`"🍎".repeat(100)` は length 200） | レビュー |
 | domain | features の domain で zod の `.min(` / `.max(` を使わない（`Math.min` / `Math.max` は可。Issue #332） | 文字数はコードポイント数で数えるため（上の行） | `rule-tests/domain-validation.test.ts` の `no-zod-length-in-domain` |
 | domain | domain で zod の `parse` / `safeParse` を直接呼ばず `DomainValidation.validated`（`validate.ts`）を通す | - | `rule-tests/domain-validation.test.ts` の `no-direct-zod-parse-in-domain` |
 | domain | `validation_error` の DomainError を作るのは backend 全体で `validate.ts` だけ | - | `rule-tests/domain-validation.test.ts` の `validation-error-only-in-validate` |
@@ -182,7 +182,14 @@ paths:
 | 生成 | テストで時刻を決めるときは `now` を `vi.mock` で差し替える（`.claude/rules/quality/testing.md` の「テストダブル」） | - | `rule-tests/test-doubles.test.ts` の `vi-mock-only-now` |
 | 完全コンストラクタ | `Todo` の private コンストラクタが毎回、値のすべてを `todoPropsSchema`（Todo の不変条件）で検証する。`create` / `reconstruct`（DB の行）/ `rename` / `changeCompletion` はコンストラクタに値を渡すだけで、口ごとに検証の範囲を分けない（Issue #94。Issue #88 の「restore は検証しない」を撤回） | 「Todo 型の値 = 不変条件を満たす値」が常に成り立つ | レビュー |
 | 完全コンストラクタ | 規則を変えるときは既存のデータを移行（スキル `db-migration`）して追従する | - | レビュー |
-| 完全コンストラクタ | branded 型は使わない | Todo 型そのものが不変条件を満たす値を表すため（`todo.ts` のコメント） | レビュー |
+| 値オブジェクト | 値の規則（長さ・範囲・形式）を持つ string / number は、Entity のフィールドに素のまま持たず、値オブジェクト（VO）のクラスにする（`TodoId`・`TodoTitle`。Issue #423）。domain のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）の型注釈に `string` / `number` / `bigint` を含めない（`string[]`・`string \| undefined` などの合成も）。VO が中身を持つフィールドは名前を `value` にする（この名前だけ通す） | 型が「検証済みの値」を表し、規則が VO のコンストラクタの 1 か所にまとまる。素の string だと、別の Entity や application が検証せずに受け渡せ、別の string（タイトルと id）を取り違えても型で止まらない。決定は ADR `docs/adr/architecture/20261003-value-objects-in-domain.md`（以前の「branded 型は使わない」を置き換える） | `rule-tests/architecture.test.ts` の `domain-value-object` |
+| 値オブジェクト | `domain-value-object` の限界: メソッドの引数・戻り値、アクセサ、interface / type の項目、型の別名経由（`type Name = string`）、注釈の無いフィールドの推論は見ない。名前が `value` なら Entity のフィールドでも通る。関数の型（`(x: string) => void`）や型引数（`Map<string, X>`）のフィールドも違反になる | 限界（見逃す方向と多く検出する方向）。詳細は `.claude/rules/code/architecture-check.md` | レビュー |
+| 値オブジェクト | VO は 1 クラス 1 ファイルで、feature の `domain/` に置く（`todo-title.ts` の `TodoTitle`） | どの値の規則がどこにあるかをファイル名で引ける | レビュー |
+| 値オブジェクト | VO は完全コンストラクタ: コンストラクタが毎回 `DomainValidation.validated`（`validate.ts`）で自分のスキーマを検証し、検証後の値を `value` に持つ。不変（`readonly` と `Object.freeze`）で、等しさは `equals`（値で比べる）で判定する | どの口（生成・DB の行・application の入力）から作っても「VO 型の値 = 規則を満たす値」が成り立つ。DB から読み直した値は同じ値でも別のインスタンスになるので、`===` では比べない | レビュー |
+| 値オブジェクト | エラーのキー（`todo.title.empty` など）は VO が持つ（VO のスキーマの `KeyedIssue.of` / `KeyedIssue.refine`）。値の上限などの定数も VO のファイルに置く（`TODO_TITLE_MAX_LENGTH` は `todo-title.ts`） | 規則・キー・定数を 1 か所にし、presentation が重ねるときも同じものを参照する | レビュー |
+| 値オブジェクト | Entity のスキーマ（`todoPropsSchema`）は VO の項目を `z.instanceof(<VO>)` で確かめる（中身の規則は VO が検証済みなので、Entity では重ねない） | 規則の正を VO の 1 か所にする。`z.instanceof` で、VO でない値（素の string）を as で偽って渡したときも止める | レビュー |
+| 値オブジェクト | 規則を持たない `boolean` と `Date` は VO にしない（`completed`・`createdAt`） | `boolean` は 2 値で規則を持たず、`Date` は日時の型そのもの。包んでも検証するものが無く、変換の手間だけが増える。規則が要るようになったら VO にする | レビュー |
+| 値オブジェクト | application は入力の primitive（リクエストの string）から VO を作って domain に渡し、presentation は応答で `value` から primitive に戻す（VO を JSON にそのまま出さない） | domain の外との境界で 1 回だけ変換し、domain の中は VO だけで扱う。応答の形（JSON の文字列）は VO の内部の形と分ける | レビュー |
 
 ## ユースケースとトランザクション
 
