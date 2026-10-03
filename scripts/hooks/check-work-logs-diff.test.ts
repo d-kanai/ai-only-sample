@@ -8,7 +8,9 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // CI の PR で作業ログの追記を必須にするスクリプト（scripts/hooks/check-work-logs-diff.sh <base-ref>）の仕様。Issue #64。
-// `git diff --name-only <base-ref>...HEAD` に docs/work-logs/ の .md が 1 件以上あれば exit 0、無ければ理由を出して exit 1。
+// `git diff --name-only <base-ref>...HEAD` に、PR のブランチの作業ログ docs/work-logs/<日付>/<ブランチ名の / を - にしたもの>.md
+// （Issue #441）の追加・変更があれば exit 0、無ければ理由を出して exit 1。ブランチ名は CI では GITHUB_EVENT_PATH の
+// pull_request.head.ref、手元では今のブランチ。
 // CI の ci.yml に組み込まれていることは rule-tests/work-logs-check.test.ts が検査する。
 
 const scriptPath = resolve(import.meta.dirname, "check-work-logs-diff.sh");
@@ -46,10 +48,15 @@ describe("check-work-logs-diff.sh", () => {
     });
   }
 
-  // GitHub Actions が GITHUB_EVENT_PATH に置く pull_request のイベントの JSON（必要な pull_request.user.login だけ）を作る。
-  function pullRequestEvent(login: string) {
+  // GitHub Actions が GITHUB_EVENT_PATH に置く pull_request のイベントの JSON（必要な pull_request.user.login と head.ref だけ）を作る。
+  function pullRequestEvent(login: string, headRef = "work") {
     const path = join(tmp, "event.json");
-    writeFileSync(path, JSON.stringify({ pull_request: { user: { login } } }));
+    writeFileSync(
+      path,
+      JSON.stringify({
+        pull_request: { user: { login }, head: { ref: headRef } },
+      }),
+    );
     return { GITHUB_EVENT_PATH: path };
   }
 
@@ -75,7 +82,12 @@ describe("check-work-logs-diff.sh", () => {
     };
     git(["init", "-q", "-b", "main"]);
     commitFiles(
-      { "README.md": "readme\n", "docs/work-logs/2026-09-27.md": "# 27\n" },
+      {
+        "README.md": "readme\n",
+        // 1 日 1 ファイルの頃（Issue #441 より前）のログと、PR のブランチ work の前の日のログ。
+        "docs/work-logs/2026-09-27.md": "# 27\n",
+        "docs/work-logs/2026-09-27/work.md": "# 27 work\n",
+      },
       "init",
     );
     git(["checkout", "-q", "-b", "work"]);
@@ -86,11 +98,11 @@ describe("check-work-logs-diff.sh", () => {
   });
 
   describe("通す（must pass）", () => {
-    it("docs/work-logs/ に .md を足した PR は 0 で終わる", () => {
+    it("PR のブランチの作業ログ docs/work-logs/<日付>/<ブランチ>.md を足した PR は 0 で終わる", () => {
       // given
       commitFiles({
         "src.ts": "x\n",
-        "docs/work-logs/2026-09-28.md": "# 28\n",
+        "docs/work-logs/2026-09-28/work.md": "# 28\n",
       });
 
       // when
@@ -100,9 +112,9 @@ describe("check-work-logs-diff.sh", () => {
       expect(result.status).toBe(0);
     });
 
-    it("既存の docs/work-logs/*.md に追記しただけの PR も 0 で終わる", () => {
+    it("前の日の PR のブランチの作業ログに追記しただけの PR も 0 で終わる", () => {
       // given
-      commitFiles({ "docs/work-logs/2026-09-27.md": "# 27\n追記\n" });
+      commitFiles({ "docs/work-logs/2026-09-27/work.md": "# 27 work\n追記\n" });
 
       // when
       const result = run(["main"]);
@@ -111,12 +123,26 @@ describe("check-work-logs-diff.sh", () => {
       expect(result.status).toBe(0);
     });
 
-    it("docs/work-logs/ のサブディレクトリの .md も数える", () => {
+    it("ブランチ名の / を - にしたファイル名（feat/1-x → feat-1-x.md）で数える", () => {
       // given
-      commitFiles({ "docs/work-logs/2026/09-28.md": "# 28\n" });
+      git(["checkout", "-q", "-b", "feat/1-x"]);
+      commitFiles({ "docs/work-logs/2026-09-28/feat-1-x.md": "# 28\n" });
 
       // when
       const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(0);
+    });
+
+    // WHY head.ref: CI の actions/checkout は PR のマージコミットを detached HEAD で取り出すので、今のブランチ名が無い。
+    it("GITHUB_EVENT_PATH があれば pull_request.head.ref のブランチ名で見る（detached HEAD でも）", () => {
+      // given
+      commitFiles({ "docs/work-logs/2026-09-28/feat-1-x.md": "# 28\n" });
+      git(["checkout", "-q", "--detach"]);
+
+      // when
+      const result = run(["main"], pullRequestEvent("d-kanai", "feat/1-x"));
 
       // then
       expect(result.status).toBe(0);
@@ -124,7 +150,7 @@ describe("check-work-logs-diff.sh", () => {
 
     it("base が PR の後に作業ログを変えずに進んでいても、PR 側の作業ログの変更で 0 になる", () => {
       // given
-      commitFiles({ "docs/work-logs/2026-09-28.md": "# 28\n" });
+      commitFiles({ "docs/work-logs/2026-09-28/work.md": "# 28\n" });
       git(["checkout", "-q", "main"]);
       commitFiles({ "other.ts": "y\n" });
       git(["checkout", "-q", "work"]);
@@ -138,15 +164,16 @@ describe("check-work-logs-diff.sh", () => {
   });
 
   describe("rename の扱い（--no-renames）", () => {
-    it("ログの名前を変えただけの PR は、追加 + 削除として見えるので 0 で終わる（限界）", () => {
+    it("ログの名前を PR のブランチの作業ログに変えただけの PR は、追加 + 削除として見えるので 0 で終わる（限界）", () => {
       // given
       // --no-renames: 利用者の diff.renames の設定に左右されず、名前の変更を常に「削除 + 追加」として扱う。
       //   rename の検出が効くと R になり --diff-filter=AM で外れる（設定で結果が変わる）。
       // 限界: 中身を足していない名前の変更でも通る（.claude/rules/tooling/work-log-hooks.md）。
+      mkdirSync(join(repo, "docs/work-logs/2026-09-28"), { recursive: true });
       git([
         "mv",
         "docs/work-logs/2026-09-27.md",
-        "docs/work-logs/2026-09-26.md",
+        "docs/work-logs/2026-09-28/work.md",
       ]);
       git(["commit", "-q", "-m", "rename log"]);
 
@@ -159,10 +186,11 @@ describe("check-work-logs-diff.sh", () => {
 
     it("diff.renames=false の設定でも結果が同じ（0）", () => {
       // given
+      mkdirSync(join(repo, "docs/work-logs/2026-09-28"), { recursive: true });
       git([
         "mv",
         "docs/work-logs/2026-09-27.md",
-        "docs/work-logs/2026-09-26.md",
+        "docs/work-logs/2026-09-28/work.md",
       ]);
       git(["commit", "-q", "-m", "rename log"]);
       git(["config", "diff.renames", "false"]);
@@ -176,7 +204,7 @@ describe("check-work-logs-diff.sh", () => {
   });
 
   describe("落とす（must reject）", () => {
-    it("作業ログの変更が無い PR は 1 で終わり、理由を stderr に出す", () => {
+    it("作業ログの変更が無い PR は 1 で終わり、書くべきファイルと理由を stderr に出す", () => {
       // given
       commitFiles({ "src.ts": "x\n" });
 
@@ -185,8 +213,95 @@ describe("check-work-logs-diff.sh", () => {
 
       // then
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("docs/work-logs/");
+      expect(result.stderr).toContain("docs/work-logs/<日付>/work.md");
       expect(result.stderr).toContain("main...HEAD");
+    });
+
+    // WHY 1 日 1 ファイルを must reject に置く: Issue #441 で、どの PR も同じ日のファイルの末尾に追記して PR どうしが
+    //   競合したので、ブランチごとのファイルに分けた。1 日 1 ファイルのログで通すと、競合する書き方に戻るのを見逃す。
+    it("1 日 1 ファイルの docs/work-logs/<日付>.md を足しただけの PR は 1 で終わる", () => {
+      // given
+      commitFiles({ "docs/work-logs/2026-09-28.md": "# 28\n" });
+
+      // when
+      const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(1);
+    });
+
+    it("既存の 1 日 1 ファイルの docs/work-logs/<日付>.md に追記しただけの PR は 1 で終わる", () => {
+      // given
+      commitFiles({ "docs/work-logs/2026-09-27.md": "# 27\n追記\n" });
+
+      // when
+      const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(1);
+    });
+
+    it("別のブランチの作業ログ（docs/work-logs/<日付>/other.md）だけなら 1 で終わる", () => {
+      // given
+      commitFiles({ "docs/work-logs/2026-09-28/other.md": "# 28\n" });
+
+      // when
+      const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(1);
+    });
+
+    it("ブランチ名の / を残したパス（docs/work-logs/<日付>/feat/1-x.md）は数えない", () => {
+      // given
+      git(["checkout", "-q", "-b", "feat/1-x"]);
+      commitFiles({ "docs/work-logs/2026-09-28/feat/1-x.md": "# 28\n" });
+
+      // when
+      const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(1);
+    });
+
+    it("日付のディレクトリの下でなければ（docs/work-logs/work.md・docs/work-logs/2026/work.md・docs/work-logs/2026-9-28/work.md）1 で終わる", () => {
+      // given
+      commitFiles({
+        "docs/work-logs/work.md": "x\n",
+        "docs/work-logs/2026/work.md": "x\n",
+        "docs/work-logs/2026-9-28/work.md": "x\n",
+      });
+
+      // when
+      const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(1);
+    });
+
+    it("GITHUB_EVENT_PATH があれば、今のブランチ名ではなく pull_request.head.ref のファイルを求める", () => {
+      // given
+      commitFiles({ "docs/work-logs/2026-09-28/work.md": "# 28\n" });
+
+      // when
+      const result = run(["main"], pullRequestEvent("d-kanai", "feat/1-x"));
+
+      // then
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("docs/work-logs/<日付>/feat-1-x.md");
+    });
+
+    it("ブランチに居ない（detached HEAD）で GITHUB_EVENT_PATH も無ければ 1 で終わり、理由を出す", () => {
+      // given
+      commitFiles({ "docs/work-logs/2026-09-28/work.md": "# 28\n" });
+      git(["checkout", "-q", "--detach"]);
+
+      // when
+      const result = run(["main"]);
+
+      // then
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("ブランチ名");
     });
 
     it("作業ログ以外の .md だけを変えた（文書だけの）PR も 1 で終わる", () => {
@@ -200,9 +315,9 @@ describe("check-work-logs-diff.sh", () => {
       expect(result.status).toBe(1);
     });
 
-    it("docs/work-logs/ の .md を削除しただけの PR は 1 で終わる（追加・変更だけを数える）", () => {
+    it("PR のブランチの作業ログを削除しただけの PR は 1 で終わる（追加・変更だけを数える）", () => {
       // given
-      git(["rm", "-q", "docs/work-logs/2026-09-27.md"]);
+      git(["rm", "-q", "docs/work-logs/2026-09-27/work.md"]);
       git(["commit", "-q", "-m", "remove log"]);
 
       // when
@@ -212,9 +327,9 @@ describe("check-work-logs-diff.sh", () => {
       expect(result.status).toBe(1);
     });
 
-    it("docs/work-logs/ の .md 以外のファイル（docs/work-logs/x.txt）だけなら 1 で終わる", () => {
+    it("作業ログの .md 以外のファイル（docs/work-logs/<日付>/work.txt）だけなら 1 で終わる", () => {
       // given
-      commitFiles({ "docs/work-logs/x.txt": "x\n" });
+      commitFiles({ "docs/work-logs/2026-09-28/work.txt": "x\n" });
 
       // when
       const result = run(["main"]);
@@ -223,9 +338,9 @@ describe("check-work-logs-diff.sh", () => {
       expect(result.status).toBe(1);
     });
 
-    it("別のディレクトリの docs/work-logs/（apps/docs/work-logs/a.md）は数えない", () => {
+    it("別のディレクトリの docs/work-logs/（apps/docs/work-logs/<日付>/work.md）は数えない", () => {
       // given
-      commitFiles({ "apps/docs/work-logs/a.md": "x\n" });
+      commitFiles({ "apps/docs/work-logs/2026-09-28/work.md": "x\n" });
 
       // when
       const result = run(["main"]);
@@ -238,7 +353,7 @@ describe("check-work-logs-diff.sh", () => {
     //   リポジトリ直下に作り直した旧いディレクトリに書く誤りを CI が見逃す。
     it("旧い置き場所（リポジトリ直下の work-logs/）の .md だけなら 1 で終わる", () => {
       // given
-      commitFiles({ "work-logs/2026-09-28.md": "# 28\n" });
+      commitFiles({ "work-logs/2026-09-28/work.md": "# 28\n" });
 
       // when
       const result = run(["main"]);
@@ -249,7 +364,7 @@ describe("check-work-logs-diff.sh", () => {
 
     it("docs/work-logs の前方一致のディレクトリ（docs/work-logs-old/）の .md だけなら 1 で終わる", () => {
       // given
-      commitFiles({ "docs/work-logs-old/a.md": "x\n" });
+      commitFiles({ "docs/work-logs-old/2026-09-28/work.md": "x\n" });
 
       // when
       const result = run(["main"]);
@@ -264,7 +379,9 @@ describe("check-work-logs-diff.sh", () => {
       //   --diff-filter=AM で外れて 1 になる（二点に壊しても落ちない）。変更（M）なら二点では数えてしまい 0 になる。
       commitFiles({ "src.ts": "x\n" });
       git(["checkout", "-q", "main"]);
-      commitFiles({ "docs/work-logs/2026-09-27.md": "# 27\nmain で追記\n" });
+      commitFiles({
+        "docs/work-logs/2026-09-27/work.md": "# 27\nmain で追記\n",
+      });
       git(["checkout", "-q", "work"]);
 
       // when
@@ -277,8 +394,9 @@ describe("check-work-logs-diff.sh", () => {
     it("作業ツリーにある未コミットの作業ログの変更は数えない（PR の差分だけを見る）", () => {
       // given
       commitFiles({ "src.ts": "x\n" });
+      mkdirSync(join(repo, "docs/work-logs/2026-09-28"), { recursive: true });
       writeFileSync(
-        join(repo, "docs/work-logs/2026-09-28.md"),
+        join(repo, "docs/work-logs/2026-09-28/work.md"),
         "# 未コミット\n",
       );
 
@@ -291,7 +409,7 @@ describe("check-work-logs-diff.sh", () => {
 
     it("base-ref が存在しなければ 0 以外で終わる（差分を取れないまま通さない）", () => {
       // given
-      commitFiles({ "docs/work-logs/2026-09-28.md": "# 28\n" });
+      commitFiles({ "docs/work-logs/2026-09-28/work.md": "# 28\n" });
 
       // when
       const result = run(["origin/nope"]);
@@ -333,11 +451,11 @@ describe("check-work-logs-diff.sh", () => {
     it("追加した項目に無ければ 1 で終わり、無い見出しだけを stderr に挙げる", () => {
       // given
       commitFiles({
-        "docs/work-logs/2026-09-28.md": log(
+        "docs/work-logs/2026-09-28/work.md": log(
           item("足した1"),
           item("足した2", "縛れる（CI）"),
         ),
-        "docs/work-logs/2026-09-29.md": log(item("足した3")),
+        "docs/work-logs/2026-09-29/work.md": log(item("足した3")),
       });
 
       // when
@@ -353,7 +471,7 @@ describe("check-work-logs-diff.sh", () => {
     it("既存のログに追加した項目に無ければ 1 で終わる", () => {
       // given
       commitFiles({
-        "docs/work-logs/2026-09-27.md": `# 27\n\n${item("足した")}\n`,
+        "docs/work-logs/2026-09-27/work.md": `# 27\n\n${item("足した")}\n`,
       });
 
       // when
@@ -367,7 +485,7 @@ describe("check-work-logs-diff.sh", () => {
     it("追加した項目にすべてあれば 0 で終わる", () => {
       // given
       commitFiles({
-        "docs/work-logs/2026-09-28.md": log(
+        "docs/work-logs/2026-09-28/work.md": log(
           item("足した1", "縛れない（判断の中身）"),
           item("足した2", "対象外（調査のみ）"),
         ),
@@ -384,14 +502,14 @@ describe("check-work-logs-diff.sh", () => {
     it("base 側に元からある項目（`- 機械化:` が無い）は見ず、追加した項目にあれば 0 で終わる", () => {
       // given
       commitFiles(
-        { "docs/work-logs/2026-09-26.md": log(item("前からある")) },
+        { "docs/work-logs/2026-09-26/work.md": log(item("前からある")) },
         "old log",
       );
       git(["checkout", "-q", "main"]);
       git(["merge", "-q", "--ff-only", "work"]);
       git(["checkout", "-q", "work"]);
       commitFiles({
-        "docs/work-logs/2026-09-26.md": log(
+        "docs/work-logs/2026-09-26/work.md": log(
           item("前からある"),
           item("足した", "縛れる（Stop フック）"),
         ),
@@ -408,15 +526,20 @@ describe("check-work-logs-diff.sh", () => {
       // given
       // 二点（..）だと、base 側で消した項目が HEAD 側から見て「追加」になり、`- 機械化:` の無い見出しとして挙がる。
       commitFiles(
-        { "docs/work-logs/2026-09-26.md": log(item("前からある")) },
+        { "docs/work-logs/2026-09-26/work.md": log(item("前からある")) },
         "old log",
       );
       git(["checkout", "-q", "main"]);
       git(["merge", "-q", "--ff-only", "work"]);
-      commitFiles({ "docs/work-logs/2026-09-26.md": "# log\n" }, "remove item");
+      commitFiles(
+        { "docs/work-logs/2026-09-26/work.md": "# log\n" },
+        "remove item",
+      );
       git(["checkout", "-q", "work"]);
       commitFiles({
-        "docs/work-logs/2026-09-28.md": log(item("足した", "縛れない（理由）")),
+        "docs/work-logs/2026-09-28/work.md": log(
+          item("足した", "縛れない（理由）"),
+        ),
       });
 
       // when
@@ -432,19 +555,19 @@ describe("check-work-logs-diff.sh", () => {
       // 機械化の検査の diff は -M で名前変更を検出する。--no-renames だと移動が「削除 + 追加」になり、この規則より前の
       // ログの項目がすべて追加として挙がって CI が赤になる（reviewer 指摘）。移動と同時に足した項目だけを見る。
       const old = log(item("前からある1"), item("前からある2"));
-      commitFiles({ "docs/work-logs/2026-09-26.md": old }, "old log");
+      commitFiles({ "docs/work-logs/2026-09-26/work.md": old }, "old log");
       git(["checkout", "-q", "main"]);
       git(["merge", "-q", "--ff-only", "work"]);
       git(["checkout", "-q", "work"]);
       git(["config", "diff.renames", "false"]);
-      mkdirSync(join(repo, "docs/work-logs/2026"), { recursive: true });
+      mkdirSync(join(repo, "docs/work-logs/2026-09-28"), { recursive: true });
       git([
         "mv",
-        "docs/work-logs/2026-09-26.md",
-        "docs/work-logs/2026/09-26.md",
+        "docs/work-logs/2026-09-26/work.md",
+        "docs/work-logs/2026-09-28/work.md",
       ]);
       commitFiles({
-        "docs/work-logs/2026/09-26.md": `${old}\n${item("移動と同時に足した")}\n`,
+        "docs/work-logs/2026-09-28/work.md": `${old}\n${item("移動と同時に足した")}\n`,
       });
 
       // when
@@ -459,7 +582,7 @@ describe("check-work-logs-diff.sh", () => {
       // given
       commitFiles(
         {
-          "docs/work-logs/2026-09-26.md": log(
+          "docs/work-logs/2026-09-26/work.md": log(
             item("前からある1"),
             item("前からある2"),
           ),
@@ -469,11 +592,11 @@ describe("check-work-logs-diff.sh", () => {
       git(["checkout", "-q", "main"]);
       git(["merge", "-q", "--ff-only", "work"]);
       git(["checkout", "-q", "work"]);
-      mkdirSync(join(repo, "docs/work-logs/2026"), { recursive: true });
+      mkdirSync(join(repo, "docs/work-logs/2026-09-28"), { recursive: true });
       git([
         "mv",
-        "docs/work-logs/2026-09-26.md",
-        "docs/work-logs/2026/09-26.md",
+        "docs/work-logs/2026-09-26/work.md",
+        "docs/work-logs/2026-09-28/work.md",
       ]);
       git(["commit", "-q", "-m", "move log"]);
 
@@ -488,7 +611,7 @@ describe("check-work-logs-diff.sh", () => {
     it("作業ログ以外の .md で追加した見出しは見ない", () => {
       // given
       commitFiles({
-        "docs/work-logs/2026-09-28.md": log(
+        "docs/work-logs/2026-09-28/work.md": log(
           item("足した", "対象外（調査のみ）"),
         ),
         "docs/adr/x.md": "# x\n\n## 背景\n",

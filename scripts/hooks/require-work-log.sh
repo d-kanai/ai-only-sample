@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Claude Code の Stop フック（.claude/settings.json の hooks.Stop から呼ぶ）。Issue #64。
 #
-# WHAT: このターン（最後の人間の発言以降）にツールを使ったのに、その日の作業ログ docs/work-logs/<今日>.md が
+# WHAT: このターン（最後の人間の発言以降）にツールを使ったのに、その日のブランチの作業ログ
+#   docs/work-logs/<今日>/<ブランチ名の / を - にしたもの>.md（Issue #441）が
 #   作業ツリー（未追跡・ステージ済みを含む）でも、このターンの間のコミット（最後の人間の発言の timestamp 以降）でも
 #   変わっていなければ、
 #   {"decision":"block","reason":...} を stdout に出して停止を拒否する（Claude はログを書いてから止まり直す）。
@@ -134,9 +135,18 @@ if ! root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null); then
   exit 0
 fi
 
-# 日付はローカルのタイムゾーン（date +%F）。docs/work-logs/ のファイル名を付けるときと同じ規則にする（限界は .claude/rules/tooling/work-log-hooks.md）。
+# 置き場所は docs/work-logs/<今日>/<ブランチ名の / を - にしたもの>.md（Issue #441）。
+# WHY ブランチごとのファイル: 1 日 1 ファイル（docs/work-logs/<今日>.md）だと、どの PR も同じファイルの末尾に追記するので、
+#   1 本マージされるたびに残りの PR が競合した。GitHub は競合した PR で CI も auto-merge も動かさないので PR が取り残された
+#   （2026-10-03 の棚卸し）。ブランチ = PR ごとに別のファイルにすれば、追記どうしが競合しない。1 日 1 ファイルのログでは通さない。
+# 日付はローカルのタイムゾーン（date +%F）。ディレクトリ名を付けるときと同じ規則にする（限界は .claude/rules/tooling/work-log-hooks.md）。
 # 置き場所は Issue #101 でリポジトリ直下の work-logs/ から docs/work-logs/ に移した（旧い置き場所のログでは通さない）。
-log="docs/work-logs/$(date +%F).md"
+# WHY ブランチに居ない（detached HEAD）ときは止めない: 書く先のファイル名を決められないので、止め続けると上限（8 回）までループする。
+if ! branch=$(git -C "$root" symbolic-ref --short -q HEAD); then
+  warn "ブランチに居ない（detached HEAD）ため、作業ログのファイル名を決められず判定しない"
+  exit 0
+fi
+log="docs/work-logs/$(date +%F)/${branch//\//-}.md"
 
 # 起点は最後の人間のターンの時刻。timestamp が取れないときだけ今日の 0 時にフォールバックする
 # （止め続けないように緩い方へ倒す。理由は stderr）。
@@ -157,7 +167,7 @@ if [ -n "$(git -C "$root" status --porcelain -- "$log")" ]; then
     changed_in_turn=yes
   fi
 fi
-# このターンの間のコミットでの変更（コミットの日時が起点以降で、docs/work-logs/<今日>.md を変えたもの）。「ログを追記 → コミット」まで
+# このターンの間のコミットでの変更（コミットの日時が起点以降で、このブランチの今日のログを変えたもの）。「ログを追記 → コミット」まで
 # 済ませた後の停止を通すため。-- "$log" で絞る（このターンのほかのコミットでは通さない）。
 # WHY コミットも見る: この環境のユーザー側の Stop フックは未コミットの変更があると止めるので、ログはコミットしてから止まる。
 #   作業ツリーだけを見ると、コミットした後に必ずこのフックで止まってしまう。

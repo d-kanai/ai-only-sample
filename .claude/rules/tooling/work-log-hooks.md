@@ -11,16 +11,17 @@ paths:
 
 # 作業ログの強制と、フックの記録（Issue #64）
 
-作業ログ（`docs/work-logs/YYYY-MM-DD.md`）の書き方は `.claude/rules/workflow/work-log.md`（常時読み込み）。このファイルの `paths:` に `docs/work-logs/**` を入れない（ログを書くたびにフックの説明が読み込まれ、書き方は `.claude/rules/workflow/work-log.md` で足りるため）。ここは、記録漏れを止める仕組み（Stop フック・CI）と、compact・指示ファイルの読み込みを記録するフックの WHAT / WHY / 限界。決定は ADR `docs/adr/workflow/20260928-work-log-enforced-by-stop-hook-and-ci.md`、実測は 2026-09-28 の work-logs、公式の仕様と未確認の点は 2026-09-29 の work-logs「docs/ から移した記録」。
+作業ログ（`docs/work-logs/YYYY-MM-DD/<ブランチ>.md`）の書き方は `.claude/rules/workflow/work-log.md`（常時読み込み）。このファイルの `paths:` に `docs/work-logs/**` を入れない（ログを書くたびにフックの説明が読み込まれ、書き方は `.claude/rules/workflow/work-log.md` で足りるため）。ここは、記録漏れを止める仕組み（Stop フック・CI）と、compact・指示ファイルの読み込みを記録するフックの WHAT / WHY / 限界。決定は ADR `docs/adr/workflow/20260928-work-log-enforced-by-stop-hook-and-ci.md`、実測は 2026-09-28 の work-logs、公式の仕様と未確認の点は 2026-09-29 の work-logs「docs/ から移した記録」。
 
 WHY 機械で止める: 調査だけの依頼などでログの追記が漏れた（LEARNINGS.md。ユーザーの指摘）。文章のルールは読み落とされる（CLAUDE.md の原則 7）。
 
 フックの登録は `.claude/settings.json`（Stop → `require-work-log.sh`、PreCompact → `pre-compact.sh`、InstructionsLoaded → `instructions-loaded.sh`）。JSON にコメントを書けないので WHY はここと各スクリプトの先頭に書く。
 
 ## Stop フック `scripts/hooks/require-work-log.sh`
-- WHAT: そのターン（最後の人間の発言以降）にツールを使ったときは、`docs/work-logs/<今日>.md` が次のどちらかなら停止を許可する。
+- WHAT: そのターン（最後の人間の発言以降）にツールを使ったときは、今のブランチの今日のログ `docs/work-logs/<今日>/<ブランチ名の / を - にしたもの>.md`（Issue #441。以下 `<今日のログ>`）が次のどちらかなら停止を許可する。
+  - ブランチに居ない（detached HEAD）ときは、書く先を決められないので判定しない（理由を stderr に出す。止め続けないため）。
   - 作業ツリーで変わっていて（未追跡・ステージ済みを含む。`git status --porcelain`）、ファイルの更新時刻が起点（最後の人間の発言の `timestamp`）以降。
-  - 起点以降のコミットで変わっている（`git log --since=<起点> -- docs/work-logs/<今日>.md`。ほかのファイルだけのコミットは数えない）。
+  - 起点以降のコミットで変わっている（`git log --since=<起点> -- <今日のログ>`。ほかのファイルだけのコミットは数えない）。
   - どちらでもなければ `{"decision":"block","reason":...}` で停止を拒否する。Claude は理由を受け取ってログを書き、止まり直す。
   - どちらかでも、このターンで追加した項目に `- 機械化:` の行が無ければ、その見出しを挙げて停止を拒否する（下の「追加した項目の `- 機械化:`」）。
 - 順序は「ログを追記 → コミット」: この環境のユーザー側の Stop フック（`~/.claude/stop-hook-git-check.sh`）は未コミットの変更があると止める。コミットした後も通るように、このターンの間のコミットでの変更も「書いた」とみなす。
@@ -44,7 +45,10 @@ WHY 機械で止める: 調査だけの依頼などでログの追記が漏れ�
   - Stop はメインのエージェントだけで発火する（サブエージェントは SubagentStop）。worker が書いた変更のログは、オーケストレータのターンで判定される。
 
 ## CI `scripts/hooks/check-work-logs-diff.sh`（`ci.yml` の「Check docs/work-logs in PR diff」）
-- WHAT: `git diff --name-only --no-renames --diff-filter=AM origin/<base>...HEAD` に `^docs/work-logs/.*\.md$` が 1 件以上なければ失敗する。PR のときだけ（`if: github.event_name == 'pull_request'`）、準備より前（`pnpm lint` より前）に動く。`actions/checkout` は `fetch-depth: 0`（三点 diff の分岐点を求めるのに base ブランチと履歴が要る）。
+- WHAT: `git diff --name-only --no-renames --diff-filter=AM origin/<base>...HEAD` に PR のブランチのログ `docs/work-logs/<YYYY-MM-DD>/<ブランチ名の / を - にしたもの>.md` が無ければ失敗する（Issue #441。1 日 1 ファイルの `docs/work-logs/<日付>.md`・別のブランチのファイル・日付でないディレクトリでは通さない）。ブランチ名は `GITHUB_EVENT_PATH` の `pull_request.head.ref`（CI の checkout は detached HEAD のため）、無ければ今のブランチ。どちらも無ければ失敗する。
+  - WHY ブランチごと: 1 日 1 ファイルだと、どの PR も同じファイルの末尾に追記するので、1 本マージされるたびに残りの PR が競合した。GitHub は競合した PR で CI も auto-merge も動かさず通知も無いので、PR が取り残された（2026-10-03 の棚卸し）。
+  - 採らなかった案: `.gitattributes` の `merge=union`（手元の `git merge` では効くが、GitHub の mergeability の判定と Merge ボタンは merge ドライバを使わないので、PR は競合のまま止まる。https://github.com/orgs/community/discussions/9288 ）。1 項目 1 ファイル（2026-10-03 に daiki が見送り）。
+  - 限界: 自分のブランチのファイルがあれば、ほかのログ（1 日 1 ファイルの過去のログなど）の変更も通す（過去のログの誤りを直せるように）。そちらへの追記は競合しうる。PR のときだけ（`if: github.event_name == 'pull_request'`）、準備より前（`pnpm lint` より前）に動く。`actions/checkout` は `fetch-depth: 0`（三点 diff の分岐点を求めるのに base ブランチと履歴が要る）。
 - **例外は Renovate の依存更新の PR だけ**: 文書だけの PR も作業ログを要求する（Issue #64 のユーザー判断）。作者（`GITHUB_EVENT_PATH` のイベントの `pull_request.user.login`）が `renovate[bot]` で、変えたファイルがすべて依存のファイル（リポジトリ直下と `apps/<パッケージ>/` の `package.json`・`pnpm-lock.yaml`・`.tool-versions`・`.github/workflows/*.yml`）の PR だけは通す（Issue #111。bot は作業ログを書けず、更新の記録は PR に残る。ADR `docs/adr/tech-stack/20261003-renovate-for-dependency-updates.md`）。
   - `github.actor` を使わないのは、再実行した人に変わりうるため。ci.yml のステップは変えない（`rule-tests/work-logs-check.test.ts` がステップの形を検査している）。手元の実行（`GITHUB_EVENT_PATH` が無い・JSON でない）では除外しない。
   - 限界: 人が Renovate のブランチに依存のファイルだけを push すると、作者は `renovate[bot]` のままなので作業ログ無しで通る。
