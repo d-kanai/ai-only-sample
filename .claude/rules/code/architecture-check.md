@@ -24,7 +24,7 @@ paths:
 | 抽出 | import / re-export / dynamic import を正規表現で抜き出す（依存は足さない）。コメントと文字列の中の import 風の文字列は除く。``import(`x`)``（`${}` 無し）と第 2 引数つきの `import("x", { with: ... })` も拾う | - | 説明 |
 | 抽出 | 参照先の正規化: `@/x` → `apps/frontend_customer/x`（backend のファイルに書いても frontend の paths が当たるため）、`@repo/backend/x` → `apps/backend/x`、`@repo/shared/x` → `apps/shared/x`（`@repo/backend-extra`・`@repo/shared-extra` は別パッケージ）、相対パスはリポジトリ相対、それ以外はパッケージ。`@/`・`@repo/backend/`・`@repo/shared/` の後ろの `..` も解決する | - | 説明 |
 | 抽出 | ハードコードの文言と `handle` の包み方・`handle` の中の try / catch・`ProblemResponse.from` の置き場所と最上位の関数とクラスの static と domain のクラスのフィールドの型だけは構文木で見る。TypeScript 7.0.2 は JS のパーサ（`ts.createSourceFile`）を持たないので、同梱の tsgo を `typescript/unstable/sync` の API で起動し、仮想のファイルシステムに置いたソースの構文木を `forEachChild` の再帰でたどる（依存は足さない。`parseSourceFiles`） | JSX のテキスト・属性・文字列リテラルの範囲を正規表現では正しく切り出せないため | 説明 |
-| 出力 | 違反は規則ごとの形の一覧で出す（`collectViolations`）。依存の向きの `RULES` は「ファイル → 参照先」、exports は「参照元 → specifier」か「<パッケージ>/package.json の exports "キー" ...」、置き場所は「ファイル」だけ、それ以外（環境変数・console・現在時刻・ハードコードの文言・`handle` の包み方・`handle` の中の try / catch・`ProblemResponse.from`・`class-based`・`no-static-in-instance-class`・`domain-value-object`）は「ファイル:行」 | - | 説明 |
+| 出力 | 違反は規則ごとの形の一覧で出す（`collectViolations`）。依存の向きの `RULES` は「ファイル → 参照先」、exports は「参照元 → specifier」か「<パッケージ>/package.json の exports "キー" ...」、置き場所は「ファイル」だけ、それ以外（環境変数・console・現在時刻・ハードコードの文言・`handle` の包み方・`handle` の中の try / catch・`ProblemResponse.from`・`class-based`・`no-static-in-instance-class`・`domain-value-object`・`frontend-no-manual-memo`）は「ファイル:行」 | - | 説明 |
 
 ## import と exports
 
@@ -145,7 +145,7 @@ paths:
 | zod と zustand | 2 つの規則の限界: `require(...)` と埋め込み式のあるテンプレートリテラルの `import()` は拾わない（抽出の限界）。`stores/` の中に置いた状態がその置き場所に合うか（サーバのデータを入れていないか）は見ない | 限界（見逃す） | レビュー |
 | memo | `frontend-no-manual-memo`（`FRONTEND_NO_MANUAL_MEMO`）: `apps/frontend_customer/` のテスト以外のソース（`app/`・`test-support/`・直下のファイルも）で、`"react"` からの名前付きの import と re-export のうち元の名前（`as` の前。文字列の名前も）が `useCallback`・`useMemo`・`memo` のもの、と名前空間の参照（`<名前>.useMemo`・`<名前>["useMemo"]`。<名前> は `"react"` の default import・namespace import のローカル名と `React`）を「ファイル:行」で違反にする（構文木で見る。`findManualMemos`） | React Compiler（`next.config.ts` の `reactCompiler: true`）がメモ化する。手で書くと依存配列の書き間違いと等価な変異を抱える（`.claude/rules/code/frontend.md` の「メモ化」） | `rule-tests/architecture.test.ts` の `frontend-no-manual-memo`・`findManualMemos` |
 | memo | `frontend-no-manual-memo` が通すもの: ほかの react の hook と型（`useState`・`React.useState`・`MemoExoticComponent`）、`"react"` 以外からの同じ名前（自前の `./cache`・`react-dom`）、react の名前空間でない値の `.memo`（`cache.memo`）とローカルの `memo` という関数、コメントと文字列の中、テスト | 判定の例 `MANUAL_MEMO_EXAMPLES` と fixture で固定する | `rule-tests/architecture.test.ts` の `MANUAL_MEMO_EXAMPLES` |
-| memo | `frontend-no-manual-memo` の限界: 分割代入（`const { useMemo } = React`）、dynamic `import()`・`require`、自前のファイルが re-export したものを使う形（中継の re-export そのものは拾う）、`export * from "react"` は拾わない。`React` という名前の別の値の `.memo` も違反にする | 限界（見逃す方向と多く検出する方向） | レビュー |
+| memo | `frontend-no-manual-memo` の限界: 分割代入（`const { useMemo } = React`）、dynamic `import()`・`require`、自前のファイルが re-export したものを使う形（中継の re-export そのものは拾う）、`export * from "react"`・`export * as R from "react"`、括弧で包んだ参照（`(React).useMemo`）、テンプレートリテラルの要素アクセス（`` React[`useCallback`] ``）は拾わない。`React` という名前の別の値の `.memo` も違反にする | 限界（見逃す方向と多く検出する方向） | レビュー |
 
 ## テストの持ち方
 

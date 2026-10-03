@@ -5271,7 +5271,7 @@ const RULE_EXAMPLES: Record<
       // shared/stores/ と features/<f>/stores/ の下（入れ子も。値・型だけ・サブパス）。
       ["apps/frontend_customer/shared/stores/ui-store.ts", "zustand", "value"],
       [
-        "apps/frontend_customer/features/todo/stores/filter-store.ts",
+        "apps/frontend_customer/features/todo/stores/filter-store.tsx",
         "zustand/middleware",
         "value",
       ],
@@ -9249,14 +9249,14 @@ const MUST_PASS_FILES: Record<string, string> = {
   "apps/frontend_customer/features/todo/hooks/good-form.hook.ts": lines(
     'import { zodResolver } from "@hookform/resolvers/zod";',
     'import { useState } from "react";',
-    'import { useFilter } from "@/features/todo/stores/filter-store";',
+    'import { createFilterStore } from "@/features/todo/stores/filter-store";',
     'import { z } from "@/shared/validation/zod";',
-    "export const useGoodForm = () => [zodResolver(z.object({})), useState(0), useFilter()];",
+    "export const useGoodForm = () => [zodResolver(z.object({})), useState(0), createFilterStore()];",
   ),
-  "apps/frontend_customer/features/todo/stores/filter-store.ts": lines(
-    'import { create } from "zustand";',
+  "apps/frontend_customer/features/todo/stores/filter-store.tsx": lines(
+    'import { createStore } from "zustand/vanilla";',
     'import { persist } from "zustand/middleware";',
-    'export const useFilter = create(persist(() => ({ done: false }), { name: "filter" }));',
+    'export const createFilterStore = () => createStore(persist(() => ({ done: false }), { name: "filter" }));',
   ),
   "apps/frontend_customer/shared/stores/ui-store.ts": lines(
     'import type { StoreApi } from "zustand";',

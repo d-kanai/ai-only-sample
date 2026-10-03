@@ -16,7 +16,7 @@ frontend の状態は、サーバのデータを TanStack Query、フォーム�
 
 ## 理由
 - 状態の種類ごとに持つ場所を 1 つにする。zustand を「画面をまたぐクライアントだけの状態」に限ると、TanStack Query のキャッシュ（無効化・再取得）と同じデータを二重に持たない。
-- zustand は Provider 無しでも hook 1 つで store を読め、読む値を選んだ部品だけが描き直される。React の `useSyncExternalStore` で store を購読する（`zustand@5.0.15` の `esm/react.mjs`。2026-10-03 に確認）。
+- Provider で配った store も hook 1 つで読め、selector で読む値を選んだ部品だけが描き直される。React の `useSyncExternalStore` で store を購読する（`zustand@5.0.15` の `esm/react.mjs`。2026-10-03 に確認）。
 - store を置く場所を決めると、共有の状態の一覧がディレクトリで読め、「store にしてよい状態か」をレビューで見る場所が 1 つになる。zustand への依存も `stores/` に閉じ込められ、ライブラリを替えるときは `stores/` の中だけを直せばよい。名前を `stores/` にするのは、feature の中の役割のディレクトリ（`api/`・`hooks/`・`components/`）と同じく複数形の役割名にそろえるため。
 - モジュールの最上位の store は、Next のサーバではすべての要求で共有される。zustand の Next.js の手引きは、store を要求ごとに作り、グローバルの store を置かないことを勧めている（https://github.com/pmndrs/zustand/blob/main/docs/learn/guides/nextjs.md の「No global stores」。2026-10-03 に確認。手引きの冒頭に、今後更新するとの注記がある）。
 
