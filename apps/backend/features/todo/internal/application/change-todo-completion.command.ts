@@ -1,5 +1,6 @@
 import type { TransactionRunner } from "../../../../shared/transaction/transaction";
 import type { Todo } from "../domain/todo";
+import { TodoId } from "../domain/todo-id";
 import type { TodoRepository } from "../domain/todo-repository";
 
 // WHY completed の値を受け取る（toggle にしない）: 同じリクエストを 2 回送っても結果が同じ（冪等）になるため
@@ -35,7 +36,13 @@ export class ChangeTodoCompletionCommand {
   async execute(input: ChangeTodoCompletionInput): Promise<Todo> {
     const { current, changed } = await this.transactions.run(async (tx) => {
       // 無い id は findByIdForUpdate が not_found の DomainError を投げる（API で 404）。
-      const current = await this.repository.findByIdForUpdate(input.id, tx);
+      // WHY ここで TodoId を作る（Input は string のまま）: Input は presentation から届く値の形で、値オブジェクトにするのは domain に
+      //   渡す直前（Issue #423）。presentation の ResourceId.parseUuid が uuid の形を先に確かめる（違えば 404）ので、ここで
+      //   todo.id.invalid になるのは application を直接呼んだときだけ。
+      const current = await this.repository.findByIdForUpdate(
+        new TodoId(input.id),
+        tx,
+      );
       const changed = current.changeCompletion(input.completed);
       await this.repository.update(changed, tx);
       return { current, changed };
@@ -46,7 +53,7 @@ export class ChangeTodoCompletionCommand {
     // WHY 未完了 → 完了に変わったときだけ: PUT は冪等で、同じ要求を 2 回送っても通知は 1 回にする。未完了に戻すときは知らせない。
     // WHY 本文は id だけの英語: title などの利用者の値をログに出さない（通知は今はログに出るだけ）。
     if (!current.completed && changed.completed) {
-      this.notifier.notify(`Todo completed: ${changed.id}`);
+      this.notifier.notify(`Todo completed: ${changed.id.value}`);
     }
     return changed;
   }

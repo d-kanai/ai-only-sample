@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import { InMemoryTodoRepository } from "../../../../test-support/todo/todo-repository.in-memory";
 import { inMemoryTransaction } from "../../../../test-support/transaction-runner.in-memory";
 import { Todo } from "../domain/todo";
+import { TodoTitle } from "../domain/todo-title";
 import { ListTodosQuery } from "./list-todos.query";
 
 describe("ListTodosQuery", () => {
@@ -22,8 +23,8 @@ describe("ListTodosQuery", () => {
   test("Repository の findAll が返した Todo をそのまま返す", async () => {
     // given
     const repository = new InMemoryTodoRepository();
-    const first = Todo.create("牛乳を買う");
-    const second = Todo.create("卵を買う");
+    const first = Todo.create(new TodoTitle("牛乳を買う"));
+    const second = Todo.create(new TodoTitle("卵を買う"));
     await repository.insert(first, inMemoryTransaction);
     await repository.insert(second, inMemoryTransaction);
 
@@ -32,6 +33,9 @@ describe("ListTodosQuery", () => {
 
     // then
     await expect(repository.findAll()).resolves.toEqual(todos);
-    expect(todos.map((todo) => todo.title)).toEqual(["牛乳を買う", "卵を買う"]);
+    expect(todos.map((todo) => todo.title.value)).toEqual([
+      "牛乳を買う",
+      "卵を買う",
+    ]);
   });
 });

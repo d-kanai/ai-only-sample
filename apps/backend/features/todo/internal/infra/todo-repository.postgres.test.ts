@@ -20,6 +20,9 @@ import { DomainError } from "../../../../shared/error/domain-error";
 import type { Transaction } from "../../../../shared/transaction/transaction";
 import { TestDatabase } from "../../../../test-support/database";
 import { Todo } from "../domain/todo";
+import { TodoId } from "../domain/todo-id";
+import { TodoStatusChange } from "../domain/todo-status-change";
+import { TodoTitle } from "../domain/todo-title";
 import { todoStatusChanges, todos } from "./schema";
 import { PostgresTodoRepository } from "./todo-repository.postgres";
 
@@ -83,12 +86,23 @@ function update(todo: Todo): Promise<void> {
   return inTransaction((tx) => repository().update(todo, tx));
 }
 
-function remove(id: string): Promise<void> {
+function remove(id: TodoId): Promise<void> {
   return inTransaction((tx) => repository().delete(id, tx));
 }
 
 // command と同じく、トランザクションの中で行をロックして読む（トランザクションはすぐ終わるので、ロックもすぐ外れる）。
-function load(id: string): Promise<Todo> {
+// 完了の履歴の 1 件（Todo が読み出す値と同じ値オブジェクト）。
+function change(completed: boolean, changedAt: Date): TodoStatusChange {
+  return new TodoStatusChange({ completed, changedAt });
+}
+
+// TodoId のコンストラクタ（形の検証）を通らない id。型を偽った呼び出しで、Repository が形を検査せずに Postgres のエラーを
+//   そのまま投げることを確かめるのに使う。
+function forgedId(value: string): TodoId {
+  return { value } as TodoId;
+}
+
+function load(id: TodoId): Promise<Todo> {
   return inTransaction((tx) => repository().findByIdForUpdate(id, tx));
 }
 
@@ -253,7 +267,9 @@ describe("PostgresTodoRepository", () => {
     // given
     const createdAt = new Date("2026-09-28T01:02:03.456Z");
     vi.mocked(Clock.now).mockReturnValueOnce(createdAt);
-    const todo = Todo.create("牛乳を買う").changeCompletion(true);
+    const todo = Todo.create(new TodoTitle("牛乳を買う")).changeCompletion(
+      true,
+    );
     expect(todo.createdAt).toEqual(createdAt);
 
     // when
@@ -308,7 +324,7 @@ describe("PostgresTodoRepository", () => {
     const todos = await repository().findAll();
 
     // then
-    expect(todos.map((todo) => todo.title)).toEqual([
+    expect(todos.map((todo) => todo.title.value)).toEqual([
       "古い",
       "真ん中",
       "新しい",
@@ -334,18 +350,21 @@ describe("PostgresTodoRepository", () => {
     const todos = await repository().findAll();
 
     // then
-    expect(todos.map((todo) => todo.title)).toEqual(["小さい id", "大きい id"]);
+    expect(todos.map((todo) => todo.title.value)).toEqual([
+      "小さい id",
+      "大きい id",
+    ]);
   });
 
   // 本番の rename / change-todo-completion の command と同じく、findByIdForUpdate で読み込んだ Todo（origin を持つ）を変えて update する。
   test("読み込んだ Todo を変えて update すると上書きされ、行は増えない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
 
     // when
     const updated = (await load(todo.id))
-      .rename("卵を買う")
+      .rename(new TodoTitle("卵を買う"))
       .changeCompletion(true);
     await update(updated);
 
@@ -359,19 +378,19 @@ describe("PostgresTodoRepository", () => {
   //   insert は読み込み済みの Todo を新規として全列を書き、update は差分の基準（origin）が無い。呼び出し側の誤りとして Error にする。
   test("読み込み済みの Todo（origin がある）を insert すると Error を投げ、何も書かない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = await load(todo.id);
 
     // when
     const promise = inTransaction((tx) =>
-      repository().insert(loaded.rename("卵を買う"), tx),
+      repository().insert(loaded.rename(new TodoTitle("卵を買う")), tx),
     );
 
     // then
     await expect(promise).rejects.toEqual(
       new Error(
-        `insert takes a new Todo (Todo.create), but got a loaded one: ${todo.id}`,
+        `insert takes a new Todo (Todo.create), but got a loaded one: ${todo.id.value}`,
       ),
     );
     await expect(repository().findAll()).resolves.toEqual([loaded]);
@@ -379,7 +398,7 @@ describe("PostgresTodoRepository", () => {
 
   test("新規の Todo（origin が undefined）を update すると Error を投げ、何も書かない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
 
     // when
     const promise = inTransaction((tx) => repository().update(todo, tx));
@@ -387,7 +406,7 @@ describe("PostgresTodoRepository", () => {
     // then
     await expect(promise).rejects.toEqual(
       new Error(
-        `update takes a loaded Todo (findByIdForUpdate), but got a new one: ${todo.id}`,
+        `update takes a loaded Todo (findByIdForUpdate), but got a new one: ${todo.id.value}`,
       ),
     );
     await expect(repository().findAll()).resolves.toEqual([]);
@@ -399,19 +418,19 @@ describe("PostgresTodoRepository", () => {
   //   変わった列だけを書くことを、ロックせずに読んだ 2 つの Todo（findById）で固定する。
   test("ロックせずに同じ Todo を 2 回読み、片方で完了にして update、もう片方で名前を変えて update すると、両方の変更が残る（別の列の変更を巻き戻さない）", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const a = (await repository().findById(todo.id)) as Todo;
     const b = (await repository().findById(todo.id)) as Todo;
 
     // when
     await update(a.changeCompletion(true));
-    await update(b.rename("x"));
+    await update(b.rename(new TodoTitle("x")));
 
     // then
     const [row] = await database.db.select().from(todos);
     expect(row).toEqual({
-      id: todo.id,
+      id: todo.id.value,
       title: "x",
       completed: true,
       createdAt: todo.createdAt,
@@ -420,53 +439,53 @@ describe("PostgresTodoRepository", () => {
 
   test("ロックせずに同じ Todo を 2 回読み、両方で名前を変えて update すると、後から update した名前が残る（同じ列は後勝ち）", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const a = (await repository().findById(todo.id)) as Todo;
     const b = (await repository().findById(todo.id)) as Todo;
 
     // when
-    await update(b.rename("y"));
-    await update(a.rename("z"));
+    await update(b.rename(new TodoTitle("y")));
+    await update(a.rename(new TodoTitle("z")));
 
     // then
     await expect(repository().findById(todo.id)).resolves.toMatchObject({
-      title: "z",
+      title: { value: "z" },
     });
   });
 
   // 後勝ちの例外: 読み込んだときと同じ値に戻す変更は差分が無いので書かれない（version 列は入れない。ユーザー判断）。
   test("ロックせずに同じ Todo を 2 回読み、片方が名前を変えて update した後、もう片方が読み込んだときの名前に戻して update しても書かれず、先の変更が残る", async () => {
     // given
-    const todo = Todo.create("x");
+    const todo = Todo.create(new TodoTitle("x"));
     await insert(todo);
     const a = (await repository().findById(todo.id)) as Todo;
     const b = (await repository().findById(todo.id)) as Todo;
 
     // when
-    await update(b.rename("y"));
-    await update(a.rename("y").rename("x"));
+    await update(b.rename(new TodoTitle("y")));
+    await update(a.rename(new TodoTitle("y")).rename(new TodoTitle("x")));
 
     // then
     await expect(repository().findById(todo.id)).resolves.toMatchObject({
-      title: "y",
+      title: { value: "y" },
     });
   });
 
   test("読み込んだ Todo を変えずに update しても、その間に別の update が書いた値を巻き戻さない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const a = (await repository().findById(todo.id)) as Todo;
     const b = (await repository().findById(todo.id)) as Todo;
 
     // when
-    await update(a.rename("卵を買う").changeCompletion(true));
+    await update(a.rename(new TodoTitle("卵を買う")).changeCompletion(true));
     await update(b);
 
     // then
     const saved = await load(todo.id);
-    expect({ title: saved.title, completed: saved.completed }).toEqual({
+    expect({ title: saved.title.value, completed: saved.completed }).toEqual({
       title: "卵を買う",
       completed: true,
     });
@@ -480,7 +499,7 @@ describe("PostgresTodoRepository", () => {
   //   （pg_blocking_pids）状態になってから先を進めることで確かめる。ロックが無ければ後の command は待たず、この状態にならない。
   test("同じ Todo の 2 つの command（findByIdForUpdate → update）を同時に動かすと、後の command は先の COMMIT まで待ってから読み、両方の変更が残る", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const firstLocked = deferred<number>();
     const releaseFirst = deferred();
@@ -495,7 +514,7 @@ describe("PostgresTodoRepository", () => {
     const firstPid = await firstLocked.promise;
     const second = inTransaction(async (tx) => {
       const b = await repository().findByIdForUpdate(todo.id, tx);
-      await repository().update(b.rename("x"), tx);
+      await repository().update(b.rename(new TodoTitle("x")), tx);
       return b;
     });
     // WHY finally で先を進め、両方の終わりを待つ: 待ちの確認に失敗しても（ロックが無いなど）2 つのトランザクションを終わらせてから
@@ -514,7 +533,7 @@ describe("PostgresTodoRepository", () => {
     expect(readBySecond.completed).toBe(true);
     const [row] = await database.db.select().from(todos);
     expect(row).toEqual({
-      id: todo.id,
+      id: todo.id.value,
       title: "x",
       completed: true,
       createdAt: todo.createdAt,
@@ -526,7 +545,7 @@ describe("PostgresTodoRepository", () => {
   //   55P03（lock_not_available）で確かめる（時間の長さで「待った」を判定しない）。
   test("findByIdForUpdate で読んだ Todo の行は、そのトランザクションの終わりまで別の接続から DELETE できない（待つ）", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
 
     // when
@@ -535,7 +554,7 @@ describe("PostgresTodoRepository", () => {
       return database.db
         .transaction(async (other) => {
           await other.execute(sql`set local lock_timeout = '50ms'`);
-          await other.delete(todos).where(eq(todos.id, todo.id));
+          await other.delete(todos).where(eq(todos.id, todo.id.value));
         })
         .then(
           () => undefined,
@@ -553,7 +572,7 @@ describe("PostgresTodoRepository", () => {
   //   update / delete に進まず、無い Todo として 404 にする（findByIdForUpdate の契約）。
   test("findByIdForUpdate がロックを待っている間に、先の command が同じ Todo を delete して COMMIT すると、not_found の DomainError を投げる", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const firstLocked = deferred<number>();
     const releaseFirst = deferred();
@@ -580,7 +599,7 @@ describe("PostgresTodoRepository", () => {
     // then
     await expect(first).resolves.toBeUndefined();
     await expect(second).rejects.toEqual(
-      new DomainError("not_found", "todo.notFound", { id: todo.id }),
+      new DomainError("not_found", "todo.notFound", { id: todo.id.value }),
     );
   });
 
@@ -588,7 +607,7 @@ describe("PostgresTodoRepository", () => {
   //   ロックしている間も読める（ロックを取ると、command の間は一覧も詳細も待たされる）。
   test("findAll・findById は、command が行をロックしている間も待たずに読める", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
 
     // when
@@ -611,7 +630,7 @@ describe("PostgresTodoRepository", () => {
   // 同じ値への changeCompletion は Todo を変えない（todo.ts）ので、履歴も足さず SQL を発行しない。
   test("読み込んだ Todo を変えずに update すると、SQL を発行しない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = await load(todo.id);
     const query = vi.spyOn(pg.Client.prototype, "query");
@@ -633,17 +652,17 @@ describe("PostgresTodoRepository", () => {
   //   以前の upsert は、読み込んだ後に消された Todo を INSERT で戻していた（PUT と DELETE の競合）。
   test("ロックせずに読んだ後に delete された Todo を変えて update すると、Error を投げ、Todo を戻さない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = (await repository().findById(todo.id)) as Todo;
     await remove(todo.id);
 
     // when
-    const promise = update(loaded.rename("卵を買う"));
+    const promise = update(loaded.rename(new TodoTitle("卵を買う")));
 
     // then
     await expect(promise).rejects.toEqual(
-      new Error(`todos has no row to update: ${todo.id}`),
+      new Error(`todos has no row to update: ${todo.id.value}`),
     );
     await expect(repository().findAll()).resolves.toEqual([]);
   });
@@ -651,7 +670,7 @@ describe("PostgresTodoRepository", () => {
   // 変わった列が無ければ SQL を発行しないので、消されたことにも気づかない。
   test("読み込んだ後に delete された Todo を変えずに update すると、何もしない（エラーにせず、Todo を戻さない）", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = (await repository().findById(todo.id)) as Todo;
     await remove(todo.id);
@@ -668,7 +687,7 @@ describe("PostgresTodoRepository", () => {
   //   （SQLSTATE 23505）で気づける。
   test("新規の Todo（create したもの）を 2 回 insert すると、2 回目はエラーになり行は 1 件のまま", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
 
     // when
@@ -684,11 +703,13 @@ describe("PostgresTodoRepository", () => {
   // WHY: 読み込んだ Todo が origin を持たないと、update が差分を取れない（insert に渡すと新規として全列を書く）。
   test("findById・findByIdForUpdate・findAll が返す Todo は、読み込んだときの値を origin に持つ", async () => {
     // given
-    const todo = Todo.create("牛乳を買う").changeCompletion(true);
+    const todo = Todo.create(new TodoTitle("牛乳を買う")).changeCompletion(
+      true,
+    );
     await insert(todo);
     const values = {
       id: todo.id,
-      title: "牛乳を買う",
+      title: new TodoTitle("牛乳を買う"),
       completed: true,
       createdAt: todo.createdAt,
       statusChanges: todo.statusChanges,
@@ -710,19 +731,19 @@ describe("PostgresTodoRepository", () => {
   //   読み込んだときの値に戻らないことで確かめる（全列を書く実装では戻る）。
   test("読み込んだ Todo の update は変わった列だけを書き、他の列（作成日時を含む）は DB の値のまま残す", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = await load(todo.id);
     const createdAt = new Date("2026-01-01T00:00:00.000Z");
     await database.db.update(todos).set({ createdAt, completed: true });
 
     // when
-    await update(loaded.rename("卵を買う"));
+    await update(loaded.rename(new TodoTitle("卵を買う")));
 
     // then
     const [row] = await database.db.select().from(todos);
     expect(row).toEqual({
-      id: todo.id,
+      id: todo.id.value,
       title: "卵を買う",
       completed: true,
       createdAt,
@@ -733,7 +754,7 @@ describe("PostgresTodoRepository", () => {
   //   DB の行（todo_status_changes）を直接見る確認と、DB だけのテストは Postgres だけ。
   test("新規の Todo を insert すると完了の履歴（作成日時に未完了の 1 件）も保存され、読み出した Todo が同じ履歴を持つ", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
 
     // when
     await insert(todo);
@@ -744,7 +765,7 @@ describe("PostgresTodoRepository", () => {
     });
     await expect(statusChangeRows()).resolves.toStrictEqual([
       {
-        todoId: todo.id,
+        todoId: todo.id.value,
         position: 0,
         completed: false,
         changedAt: todo.createdAt,
@@ -754,7 +775,9 @@ describe("PostgresTodoRepository", () => {
 
   test("新規の Todo を作ってすぐ完了にして insert すると、履歴の 2 件がどちらも保存される", async () => {
     // given
-    const todo = Todo.create("牛乳を買う").changeCompletion(true);
+    const todo = Todo.create(new TodoTitle("牛乳を買う")).changeCompletion(
+      true,
+    );
 
     // when
     await insert(todo);
@@ -763,7 +786,7 @@ describe("PostgresTodoRepository", () => {
     await expect(repository().findById(todo.id)).resolves.toEqual(todo);
     await expect(statusChangeRows()).resolves.toStrictEqual(
       todo.statusChanges.map((change, position) => ({
-        todoId: todo.id,
+        todoId: todo.id.value,
         position,
         ...change,
       })),
@@ -774,7 +797,7 @@ describe("PostgresTodoRepository", () => {
   //   全件を消して入れ直す実装では、既存の行の id が変わる。
   test("読み込んだ Todo の完了状態を変えて update すると、増えた履歴だけが足され、既存の履歴は変わらない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const [first] = await database.db.select().from(todoStatusChanges);
 
@@ -799,7 +822,7 @@ describe("PostgresTodoRepository", () => {
     expect(rows[0]).toStrictEqual(first);
     expect(rows.map(({ id: _id, ...row }) => row)).toStrictEqual(
       reopened.statusChanges.map((change, position) => ({
-        todoId: todo.id,
+        todoId: todo.id.value,
         position,
         ...change,
       })),
@@ -809,7 +832,7 @@ describe("PostgresTodoRepository", () => {
   // 完了状態は読み込んだときと同じでも、途中の遷移は履歴に残す（todos の UPDATE は無く、履歴の INSERT だけになる）。
   test("読み込んだ Todo を完了にしてから未完了に戻して update すると、履歴の 2 件が足され、完了状態は変わらない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const toggled = (await load(todo.id))
       .changeCompletion(true)
@@ -822,7 +845,7 @@ describe("PostgresTodoRepository", () => {
     await expect(repository().findById(todo.id)).resolves.toEqual(toggled);
     await expect(statusChangeRows()).resolves.toStrictEqual(
       toggled.statusChanges.map((change, position) => ({
-        todoId: todo.id,
+        todoId: todo.id.value,
         position,
         ...change,
       })),
@@ -855,14 +878,14 @@ describe("PostgresTodoRepository", () => {
       "2026-09-28T01:00:00.000Z",
     );
     const expected = [
-      { completed: false, changedAt: createdAt },
-      { completed: true, changedAt: createdAt },
-      { completed: false, changedAt: createdAt },
+      change(false, createdAt),
+      change(true, createdAt),
+      change(false, createdAt),
     ];
 
     // when
-    const byId = await repository().findById(id);
-    const forUpdate = await load(id);
+    const byId = await repository().findById(new TodoId(id));
+    const forUpdate = await load(new TodoId(id));
     const all = await repository().findAll();
 
     // then
@@ -870,12 +893,7 @@ describe("PostgresTodoRepository", () => {
     expect(forUpdate).toMatchObject({ statusChanges: expected });
     expect(all.map((todo) => todo.statusChanges)).toStrictEqual([
       expected,
-      [
-        {
-          completed: false,
-          changedAt: new Date("2026-09-28T01:00:00.000Z"),
-        },
-      ],
+      [change(false, new Date("2026-09-28T01:00:00.000Z"))],
     ]);
   });
 
@@ -912,7 +930,7 @@ describe("PostgresTodoRepository", () => {
     // then
     expect(
       all.map(({ id, completed, statusChanges }) => ({
-        id,
+        id: id.value,
         completed,
         statusChanges,
       })),
@@ -921,19 +939,19 @@ describe("PostgresTodoRepository", () => {
         id: first,
         completed: false,
         statusChanges: [
-          { completed: false, changedAt: at(0) },
-          { completed: true, changedAt: at(1) },
-          { completed: false, changedAt: at(2) },
+          change(false, at(0)),
+          change(true, at(1)),
+          change(false, at(2)),
         ],
       },
       {
         id: second,
         completed: true,
         statusChanges: [
-          { completed: false, changedAt: at(5) },
-          { completed: true, changedAt: at(6) },
-          { completed: false, changedAt: at(7) },
-          { completed: true, changedAt: at(8) },
+          change(false, at(5)),
+          change(true, at(6)),
+          change(false, at(7)),
+          change(true, at(8)),
         ],
       },
     ]);
@@ -945,7 +963,7 @@ describe("PostgresTodoRepository", () => {
   //   command は行をロックして読むので起きないが、ロックせずに読んだ Todo（findById）を update したときの契約として固定する。
   test("ロックせずに同じ Todo を 2 回読み、両方で完了状態を変えて update すると、2 回目はエラーになり、1 回目の変更だけが残る", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const a = (await repository().findById(todo.id)) as Todo;
     const b = (await repository().findById(todo.id)) as Todo;
@@ -953,7 +971,7 @@ describe("PostgresTodoRepository", () => {
     await update(first);
 
     // when
-    const second = update(b.rename("x").changeCompletion(true));
+    const second = update(b.rename(new TodoTitle("x")).changeCompletion(true));
 
     // then
     await expect(second).rejects.toBeInstanceOf(Error);
@@ -961,7 +979,7 @@ describe("PostgresTodoRepository", () => {
     await expect(repository().findById(todo.id)).resolves.toEqual(first);
     await expect(statusChangeRows()).resolves.toStrictEqual(
       first.statusChanges.map((change, position) => ({
-        todoId: todo.id,
+        todoId: todo.id.value,
         position,
         ...change,
       })),
@@ -971,8 +989,10 @@ describe("PostgresTodoRepository", () => {
   // DB の外部キー（on delete cascade）の確認なので Postgres だけ。
   test("delete すると、その Todo の完了の履歴も消え、他の Todo の履歴は残る", async () => {
     // given
-    const removed = Todo.create("牛乳を買う").changeCompletion(true);
-    const kept = Todo.create("卵を買う");
+    const removed = Todo.create(new TodoTitle("牛乳を買う")).changeCompletion(
+      true,
+    );
+    const kept = Todo.create(new TodoTitle("卵を買う"));
     await insert(removed);
     await insert(kept);
 
@@ -982,7 +1002,7 @@ describe("PostgresTodoRepository", () => {
     // then
     await expect(statusChangeRows()).resolves.toStrictEqual([
       {
-        todoId: kept.id,
+        todoId: kept.id.value,
         position: 0,
         completed: false,
         changedAt: kept.createdAt,
@@ -994,7 +1014,7 @@ describe("PostgresTodoRepository", () => {
   //   違反（SQLSTATE 23503）で失敗し、履歴を足さない（command は行をロックして読むので起きない。呼び出し側の誤りとして 500）。
   test("ロックせずに読んだ後に delete された Todo を、完了にして未完了に戻して update すると、エラー（Postgres では外部キー違反）を投げ、履歴を足さない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = (await repository().findById(todo.id)) as Todo;
     await remove(todo.id);
@@ -1019,9 +1039,11 @@ describe("PostgresTodoRepository", () => {
   // findByIdForUpdate も同じ SELECT（1 文）で読む（トランザクションの接続で送るので、ここでは数えない）。
   test("一覧 / 詳細の読み出しは SQL 1 文で行う（読み出しの途中で別の要求の変更が片方だけに見えない）", async () => {
     // given
-    const todo = Todo.create("牛乳を買う").changeCompletion(true);
+    const todo = Todo.create(new TodoTitle("牛乳を買う")).changeCompletion(
+      true,
+    );
     await insert(todo);
-    await insert(Todo.create("卵を買う"));
+    await insert(Todo.create(new TodoTitle("卵を買う")));
     const query = vi.spyOn(database.pool, "query");
 
     // when
@@ -1049,7 +1071,7 @@ describe("PostgresTodoRepository", () => {
     );
     try {
       // when
-      const result = insert(Todo.create("牛乳を買う"));
+      const result = insert(Todo.create(new TodoTitle("牛乳を買う")));
 
       // then
       await expect(result).rejects.toBeInstanceOf(Error);
@@ -1066,13 +1088,13 @@ describe("PostgresTodoRepository", () => {
   //   InMemory は積まない）。表の名前と changes のキーは DB の名前。完了の履歴の行の id は Writer が作るので、DB から読んで照らし合わせる。
   test("新規の Todo を insert すると、変更履歴に todos の insert（全列）と完了の履歴の insert（全列）の 2 件を記録する", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
 
     // when
     const written = await changeLogsWrittenBy(() => insert(todo));
 
     // then
-    const statusId = await statusChangeId(todo.id, 0);
+    const statusId = await statusChangeId(todo.id.value, 0);
     expect(written).toStrictEqual([
       {
         tableName: "todo_status_changes",
@@ -1080,7 +1102,7 @@ describe("PostgresTodoRepository", () => {
         operation: "insert",
         changes: {
           id: { after: statusId },
-          todo_id: { after: todo.id },
+          todo_id: { after: todo.id.value },
           position: { after: 0 },
           completed: { after: false },
           changed_at: { after: todo.createdAt.toISOString() },
@@ -1089,10 +1111,10 @@ describe("PostgresTodoRepository", () => {
       },
       {
         tableName: "todos",
-        rowId: todo.id,
+        rowId: todo.id.value,
         operation: "insert",
         changes: {
-          id: { after: todo.id },
+          id: { after: todo.id.value },
           title: { after: "牛乳を買う" },
           completed: { after: false },
           created_at: { after: todo.createdAt.toISOString() },
@@ -1104,20 +1126,20 @@ describe("PostgresTodoRepository", () => {
 
   test("読み込んだ Todo の名前を変えて update すると、変更履歴に todos の update（title の前後だけ）の 1 件を記録する", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = await load(todo.id);
 
     // when
     const written = await changeLogsWrittenBy(() =>
-      update(loaded.rename("卵を買う")),
+      update(loaded.rename(new TodoTitle("卵を買う"))),
     );
 
     // then
     expect(written).toStrictEqual([
       {
         tableName: "todos",
-        rowId: todo.id,
+        rowId: todo.id.value,
         operation: "update",
         changes: { title: { before: "牛乳を買う", after: "卵を買う" } },
         actorId: null,
@@ -1131,14 +1153,14 @@ describe("PostgresTodoRepository", () => {
   //   （Issue #215〜#312 は Writer が読み直し、DB の値を before にしていた）。
   test("ロックせずに読んだ後に別の update が名前を変えていても、変更履歴の before は読み込んだときの名前（origin）になる", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const a = (await repository().findById(todo.id)) as Todo;
-    await update((await load(todo.id)).rename("卵を買う"));
+    await update((await load(todo.id)).rename(new TodoTitle("卵を買う")));
 
     // when
     const written = await changeLogsWrittenBy(() =>
-      update(a.rename("パンを買う")),
+      update(a.rename(new TodoTitle("パンを買う"))),
     );
 
     // then
@@ -1149,7 +1171,7 @@ describe("PostgresTodoRepository", () => {
 
   test("読み込んだ Todo を完了にして update すると、変更履歴に todos の update（completed の前後）と完了の履歴の insert の 2 件を記録する", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const completed = (await load(todo.id)).changeCompletion(true);
 
@@ -1157,7 +1179,7 @@ describe("PostgresTodoRepository", () => {
     const written = await changeLogsWrittenBy(() => update(completed));
 
     // then
-    const statusId = await statusChangeId(todo.id, 1);
+    const statusId = await statusChangeId(todo.id.value, 1);
     expect(written).toStrictEqual([
       {
         tableName: "todo_status_changes",
@@ -1165,7 +1187,7 @@ describe("PostgresTodoRepository", () => {
         operation: "insert",
         changes: {
           id: { after: statusId },
-          todo_id: { after: todo.id },
+          todo_id: { after: todo.id.value },
           position: { after: 1 },
           completed: { after: true },
           changed_at: {
@@ -1176,7 +1198,7 @@ describe("PostgresTodoRepository", () => {
       },
       {
         tableName: "todos",
-        rowId: todo.id,
+        rowId: todo.id.value,
         operation: "update",
         changes: { completed: { before: false, after: true } },
         actorId: null,
@@ -1187,7 +1209,7 @@ describe("PostgresTodoRepository", () => {
   // 完了にして未完了に戻すと todos の列は変わらない（update の記録は無い）が、完了の履歴は 2 件増える。
   test("読み込んだ Todo を完了にしてから未完了に戻して update すると、変更履歴に完了の履歴の insert の 2 件だけを記録する", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const toggled = (await load(todo.id))
       .changeCompletion(true)
@@ -1211,14 +1233,14 @@ describe("PostgresTodoRepository", () => {
     ).toStrictEqual([
       {
         tableName: "todo_status_changes",
-        rowId: await statusChangeId(todo.id, 1),
+        rowId: await statusChangeId(todo.id.value, 1),
         operation: "insert",
         position: { after: 1 },
         completed: { after: true },
       },
       {
         tableName: "todo_status_changes",
-        rowId: await statusChangeId(todo.id, 2),
+        rowId: await statusChangeId(todo.id.value, 2),
         operation: "insert",
         position: { after: 2 },
         completed: { after: false },
@@ -1230,7 +1252,9 @@ describe("PostgresTodoRepository", () => {
   //   その Todo の履歴が消えたことが分かる（cascade の行は Repository の SQL に現れず、読むと文が増える）。
   test("delete すると、変更履歴に todos の delete（消す前の全列）の 1 件だけを記録する", async () => {
     // given
-    const todo = Todo.create("牛乳を買う").changeCompletion(true);
+    const todo = Todo.create(new TodoTitle("牛乳を買う")).changeCompletion(
+      true,
+    );
     await insert(todo);
 
     // when
@@ -1240,10 +1264,10 @@ describe("PostgresTodoRepository", () => {
     expect(written).toStrictEqual([
       {
         tableName: "todos",
-        rowId: todo.id,
+        rowId: todo.id.value,
         operation: "delete",
         changes: {
-          id: { before: todo.id },
+          id: { before: todo.id.value },
           title: { before: "牛乳を買う" },
           completed: { before: true },
           created_at: { before: todo.createdAt.toISOString() },
@@ -1255,7 +1279,7 @@ describe("PostgresTodoRepository", () => {
 
   test("読み込んだ Todo を変えずに update しても、無い id を delete しても、変更履歴を記録しない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = await load(todo.id);
 
@@ -1263,7 +1287,7 @@ describe("PostgresTodoRepository", () => {
     const written = await changeLogsWrittenBy(async () => {
       await update(loaded);
       await update(loaded.changeCompletion(false));
-      await remove("00000000-0000-4000-8000-000000000000");
+      await remove(new TodoId("00000000-0000-4000-8000-000000000000"));
     });
 
     // then
@@ -1272,7 +1296,7 @@ describe("PostgresTodoRepository", () => {
 
   test("ロックせずに同じ Todo を 2 回読み、両方で完了状態を変えて update すると、2 回目の update は変更履歴を残さない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const a = (await repository().findById(todo.id)) as Todo;
     const b = (await repository().findById(todo.id)) as Todo;
@@ -1280,7 +1304,9 @@ describe("PostgresTodoRepository", () => {
 
     // when
     const written = await changeLogsWrittenBy(() =>
-      update(b.rename("x").changeCompletion(true)).catch(() => undefined),
+      update(b.rename(new TodoTitle("x")).changeCompletion(true)).catch(
+        () => undefined,
+      ),
     );
 
     // then
@@ -1291,14 +1317,14 @@ describe("PostgresTodoRepository", () => {
   test("actorId を渡して組み立てた runner のトランザクションで書くと、変更履歴の actorId にその id が入る", async () => {
     // given
     const actorId = "11111111-1111-4111-8111-111111111111";
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
 
     // when
     const written = await changeLogsWrittenBy(async () => {
       await inTransaction((tx) => repository().insert(todo, tx), actorId);
       await inTransaction(async (tx) => {
         const loaded = await repository().findByIdForUpdate(todo.id, tx);
-        await repository().update(loaded.rename("x"), tx);
+        await repository().update(loaded.rename(new TodoTitle("x")), tx);
       }, actorId);
       await inTransaction((tx) => repository().delete(todo.id, tx), actorId);
     });
@@ -1320,7 +1346,7 @@ describe("PostgresTodoRepository", () => {
   // 制約は後始末（finally）で外す（残すと後のテストの書き込みがすべて失敗する）。
   test("変更履歴の INSERT が失敗すると、同じ insert・update・delete の todos と完了の履歴の書き込みも戻る（1 つのトランザクション）", async () => {
     // given
-    const kept = Todo.create("卵を買う");
+    const kept = Todo.create(new TodoTitle("卵を買う"));
     await insert(kept);
     const loaded = await load(kept.id);
     await database.db.execute(
@@ -1329,8 +1355,8 @@ describe("PostgresTodoRepository", () => {
     try {
       // WHY 1 つずつ呼んで待つ: まとめて呼ぶと、待つ前に reject した Promise が未処理の reject として Vitest の実行を失敗させる。
       const writes = [
-        () => insert(Todo.create("牛乳を買う")),
-        () => update(loaded.rename("x").changeCompletion(true)),
+        () => insert(Todo.create(new TodoTitle("牛乳を買う"))),
+        () => update(loaded.rename(new TodoTitle("x")).changeCompletion(true)),
         () => remove(kept.id),
       ];
 
@@ -1346,7 +1372,7 @@ describe("PostgresTodoRepository", () => {
       await expect(repository().findAll()).resolves.toEqual([loaded]);
       await expect(statusChangeRows()).resolves.toStrictEqual([
         {
-          todoId: kept.id,
+          todoId: kept.id.value,
           position: 0,
           completed: false,
           changedAt: kept.createdAt,
@@ -1366,8 +1392,8 @@ describe("PostgresTodoRepository", () => {
   // 制約と表は後始末（finally）で外す（残すと後のテストの書き込みが失敗する）。
   test("COMMIT で失敗した insert・update・delete は、変更履歴も残さない（記録は本体と同じトランザクションで書く）", async () => {
     // given
-    const milk = Todo.create("牛乳を買う");
-    const egg = Todo.create("卵を買う");
+    const milk = Todo.create(new TodoTitle("牛乳を買う"));
+    const egg = Todo.create(new TodoTitle("卵を買う"));
     await insert(milk);
     await insert(egg);
     const loadedEgg = await load(egg.id);
@@ -1378,11 +1404,13 @@ describe("PostgresTodoRepository", () => {
     await database.db.execute(
       sql`create table tmp_refs (todo_id uuid references todos (id) deferrable initially deferred)`,
     );
-    await database.db.execute(sql`insert into tmp_refs values (${milk.id})`);
+    await database.db.execute(
+      sql`insert into tmp_refs values (${milk.id.value})`,
+    );
     try {
       // WHY 1 つずつ待つ: 同時に動かすと、遅延制約の検査が他方のトランザクションの終わりを待ち、順序で結果が変わりうる。
       // when
-      const insertion = insert(Todo.create("牛乳を買う"));
+      const insertion = insert(Todo.create(new TodoTitle("牛乳を買う")));
 
       // then
       await expect(insertion).rejects.toMatchObject({
@@ -1390,7 +1418,7 @@ describe("PostgresTodoRepository", () => {
       });
 
       // when
-      const renaming = update(loadedEgg.rename("牛乳を買う"));
+      const renaming = update(loadedEgg.rename(new TodoTitle("牛乳を買う")));
 
       // then
       await expect(renaming).rejects.toMatchObject({
@@ -1427,21 +1455,23 @@ describe("PostgresTodoRepository", () => {
   //   マスクする（Issue #216）。todos.title（利用者が書く自由文）は sensitive で ***、ほかの列（id・完了状態・日時・位置）は値のまま。
   test("新規の Todo を insert すると、todos の INSERT と完了の履歴の INSERT のそれぞれに、前後のログ（表・行の id・insert）を出し、changes の after は title だけを *** にする", async () => {
     // given
-    const todo = Todo.create("牛乳を買う").changeCompletion(true);
+    const todo = Todo.create(new TodoTitle("牛乳を買う")).changeCompletion(
+      true,
+    );
 
     // when
     const logs = await writeLogsBy(() => insert(todo));
 
     // then
     const history = [
-      (await statusChangeId(todo.id, 0)) as string,
-      (await statusChangeId(todo.id, 1)) as string,
+      (await statusChangeId(todo.id.value, 0)) as string,
+      (await statusChangeId(todo.id.value, 1)) as string,
     ];
     const historyRow = (position: number) => ({
       before: null,
       after: {
         id: history[position],
-        todo_id: todo.id,
+        todo_id: todo.id.value,
         position,
         completed: todo.statusChanges[position]?.completed,
         changed_at: todo.statusChanges[position]?.changedAt.toISOString(),
@@ -1449,12 +1479,12 @@ describe("PostgresTodoRepository", () => {
     });
     expect(logs).toStrictEqual({
       info: [
-        writeStartLine("todos", [todo.id], "insert"),
-        writeDoneLine("todos", [todo.id], "insert", [
+        writeStartLine("todos", [todo.id.value], "insert"),
+        writeDoneLine("todos", [todo.id.value], "insert", [
           {
             before: null,
             after: {
-              id: todo.id,
+              id: todo.id.value,
               title: "***",
               completed: true,
               created_at: todo.createdAt.toISOString(),
@@ -1474,22 +1504,22 @@ describe("PostgresTodoRepository", () => {
 
   test("読み込んだ Todo を変えて update すると、todos の UPDATE と完了の履歴の INSERT のそれぞれに、前後のログを出す", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const changed = (await load(todo.id))
-      .rename("卵を買う")
+      .rename(new TodoTitle("卵を買う"))
       .changeCompletion(true);
 
     // when
     const logs = await writeLogsBy(() => update(changed));
 
     // then
-    const history = [(await statusChangeId(todo.id, 1)) as string];
+    const history = [(await statusChangeId(todo.id.value, 1)) as string];
     expect(logs).toStrictEqual({
       info: [
-        writeStartLine("todos", [todo.id], "update"),
+        writeStartLine("todos", [todo.id.value], "update"),
         // update は変わった列だけ。title は前後とも ***、completed は値のまま。
-        writeDoneLine("todos", [todo.id], "update", [
+        writeDoneLine("todos", [todo.id.value], "update", [
           {
             before: { title: "***", completed: false },
             after: { title: "***", completed: true },
@@ -1501,7 +1531,7 @@ describe("PostgresTodoRepository", () => {
             before: null,
             after: {
               id: history[0],
-              todo_id: todo.id,
+              todo_id: todo.id.value,
               position: 1,
               completed: true,
               changed_at: changed.statusChanges[1]?.changedAt.toISOString(),
@@ -1517,25 +1547,25 @@ describe("PostgresTodoRepository", () => {
 
   test("delete すると、書き込みの前後に todos・id・delete のログを出す（無い id は後のログの changes が空）", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const missing = "00000000-0000-4000-8000-000000000000";
 
     // when
     const logs = await writeLogsBy(async () => {
       await remove(todo.id);
-      await remove(missing);
+      await remove(new TodoId(missing));
     });
 
     // then
     expect(logs).toStrictEqual({
       info: [
-        writeStartLine("todos", [todo.id], "delete"),
+        writeStartLine("todos", [todo.id.value], "delete"),
         // delete は消した行の全列の before（title は ***）。cascade で消えた履歴の行は記録しない。
-        writeDoneLine("todos", [todo.id], "delete", [
+        writeDoneLine("todos", [todo.id.value], "delete", [
           {
             before: {
-              id: todo.id,
+              id: todo.id.value,
               title: "***",
               completed: false,
               created_at: todo.createdAt.toISOString(),
@@ -1553,20 +1583,22 @@ describe("PostgresTodoRepository", () => {
   // 失敗は warn（500 の例外は ProblemResponse.from が error で残す）。
   test("ロックせずに読んだ後に delete された Todo を変えて update すると、前のログの後に失敗のログ（warn。Error）を出す", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = (await repository().findById(todo.id)) as Todo;
     await remove(todo.id);
-    const error = new Error(`todos has no row to update: ${todo.id}`);
+    const error = new Error(`todos has no row to update: ${todo.id.value}`);
 
     // when
     const logs = await writeLogsBy(() =>
-      expect(update(loaded.rename("卵を買う"))).rejects.toEqual(error),
+      expect(update(loaded.rename(new TodoTitle("卵を買う")))).rejects.toEqual(
+        error,
+      ),
     );
 
     // then
     expect(logs).toStrictEqual({
-      info: [writeStartLine("todos", [todo.id], "update")],
+      info: [writeStartLine("todos", [todo.id.value], "update")],
       warn: [
         {
           severity: "WARNING",
@@ -1578,7 +1610,7 @@ describe("PostgresTodoRepository", () => {
             duration_ms: expect.any(Number),
           },
           db: dbFields("todos", "update"),
-          row_id: todo.id,
+          row_id: todo.id.value,
           error: { type: "Error", message: error.message },
         },
       ],
@@ -1588,7 +1620,7 @@ describe("PostgresTodoRepository", () => {
   // 変わった列も増えた履歴も無い update は SQL を発行しない（上の「SQL を発行しない」）ので、書き込みのログも出さない。
   test("読み込んだ Todo を変えずに update すると、書き込みのログを出さない", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
     const loaded = await load(todo.id);
 
@@ -1602,7 +1634,9 @@ describe("PostgresTodoRepository", () => {
   test("無い id の findById は undefined を返す", async () => {
     // given: beforeEach で表を空にしてある
     // when
-    const found = repository().findById("00000000-0000-4000-8000-000000000000");
+    const found = repository().findById(
+      new TodoId("00000000-0000-4000-8000-000000000000"),
+    );
 
     // then
     await expect(found).resolves.toBeUndefined();
@@ -1610,7 +1644,7 @@ describe("PostgresTodoRepository", () => {
 
   test("findByIdForUpdate は id に一致する Todo を返す", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
 
     // when
@@ -1625,7 +1659,7 @@ describe("PostgresTodoRepository", () => {
     const id = "00000000-0000-4000-8000-000000000000";
 
     // when
-    const promise = load(id);
+    const promise = load(new TodoId(id));
 
     // then
     await expect(promise).rejects.toEqual(
@@ -1633,9 +1667,10 @@ describe("PostgresTodoRepository", () => {
     );
   });
 
-  // WHY uuid の形でない id を「無い」（undefined）にしない: 利用者の入力は presentation の ResourceId.parseUuid が先に 404 にする
-  //   ので、ここに uuid の形でない id が来るのは呼び出し側の実装ミスだけ。「無い」で通すと誤りが隠れる。Postgres の
+  // WHY uuid の形でない id を「無い」（undefined）にしない: id は TodoId で、形はそのコンストラクタが検証する（Issue #423）ので、
+  //   ここに uuid の形でない id が来るのは型を偽った呼び出し（実装ミス）だけ。「無い」で通すと誤りが隠れる。Postgres の
   //   uuid 型のエラー（SQLSTATE 22P02 invalid_text_representation）をそのまま投げ、API は 500 でログに残す。
+  //   TodoId のコンストラクタを通らない値を作るため、{ value } を as で TodoId に偽る（forgedId）。
   test.each([
     ["uuid でない文字列", "missing"],
     ["uuid の前に余分な文字", "x8d0f4f39-6f0b-4a39-9d53-0a3f8b1c2d4e"],
@@ -1645,7 +1680,7 @@ describe("PostgresTodoRepository", () => {
     async (_label, id) => {
       // given: beforeEach で表を空にしてある
       // when
-      const result = repository().findById(id);
+      const result = repository().findById(forgedId(id));
 
       // then
       // drizzle は失敗したクエリを DrizzleQueryError に包み、Postgres のエラー（pg の DatabaseError。SQLSTATE は code）を cause に入れる。
@@ -1659,12 +1694,12 @@ describe("PostgresTodoRepository", () => {
     },
   );
 
-  // Postgres の uuid 型は大文字の 16 進も同じ値として受け付けるので、形の検査でも大文字を弾かない（/i）。
+  // Postgres の uuid 型は大文字の 16 進も同じ値として受け付けるので、形の検査（TodoId の z.uuid()）でも大文字を弾かない。
   test("大文字で書いた uuid でも、同じ Todo を取り出せて削除できる", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     await insert(todo);
-    const upperId = todo.id.toUpperCase();
+    const upperId = new TodoId(todo.id.value.toUpperCase());
 
     // when
     const found = await repository().findById(upperId);
@@ -1679,8 +1714,8 @@ describe("PostgresTodoRepository", () => {
 
   test("delete すると取り出せなくなり、他の Todo は残る", async () => {
     // given
-    const removed = Todo.create("牛乳を買う");
-    const kept = Todo.create("卵を買う");
+    const removed = Todo.create(new TodoTitle("牛乳を買う"));
+    const kept = Todo.create(new TodoTitle("卵を買う"));
     await insert(removed);
     await insert(kept);
 
@@ -1694,11 +1729,11 @@ describe("PostgresTodoRepository", () => {
 
   test("無い id の delete は何もしない（エラーにしない）", async () => {
     // given
-    const kept = Todo.create("卵を買う");
+    const kept = Todo.create(new TodoTitle("卵を買う"));
     await insert(kept);
 
     // when
-    await remove("00000000-0000-4000-8000-000000000000");
+    await remove(new TodoId("00000000-0000-4000-8000-000000000000"));
 
     // then
     await expect(repository().findAll()).resolves.toEqual([kept]);
@@ -1707,11 +1742,11 @@ describe("PostgresTodoRepository", () => {
   // WHY findById と同じ: 「無い」として黙って何もしないと、消したつもりで消えていない実装ミスが隠れる。
   test("uuid の形でない id の delete は Postgres の invalid input syntax のエラーで reject し、何も消さない", async () => {
     // given
-    const kept = Todo.create("卵を買う");
+    const kept = Todo.create(new TodoTitle("卵を買う"));
     await insert(kept);
 
     // when
-    const result = remove("missing");
+    const result = remove(forgedId("missing"));
 
     // then
     await expect(result).rejects.toBeInstanceOf(Error);
@@ -1730,7 +1765,8 @@ describe("PostgresTodoRepository", () => {
   //   toEqual は Error の name・message・cause を比べるので、DomainError のまま投げる実装はこのテストで落ちる。
   // 行は Todo を通さずに insert する（Todo は不変条件を満たさない値を作れない）。
   // 3 番目は元の DomainError（cause）。Error の message はその message（キーと params）を含む。
-  const INVALID_ROWS = [
+  // id で引ける（id が TodoId の形を満たす）行。
+  const INVALID_TITLE_ROWS = [
     [
       "タイトルが空",
       { title: "" },
@@ -1741,6 +1777,11 @@ describe("PostgresTodoRepository", () => {
       { title: "a".repeat(101) },
       new DomainError("validation_error", "todo.title.tooLong", { max: 100 }),
     ],
+  ] as const;
+  // WHY id の形を満たさない行は findAll だけで見る: id で引くには TodoId が要り、TodoId はその形を作れない（Issue #423）。API でも
+  //   ResourceId.parseUuid が 404 にするので、そうした行に id で届く経路は無く、一覧（findAll）で 500 になる。
+  const INVALID_ROWS = [
+    ...INVALID_TITLE_ROWS,
     [
       "id の版の桁が 0（Postgres の uuid 型は受け付ける）",
       { id: "8d0f4f39-6f0b-0a39-9d53-0a3f8b1c2d4e" },
@@ -1777,7 +1818,7 @@ describe("PostgresTodoRepository", () => {
     );
   }
 
-  test.each(INVALID_ROWS)(
+  test.each(INVALID_TITLE_ROWS)(
     "不変条件を満たさない行（%s）の findById・findByIdForUpdate は、DomainError ではない Error を投げる（API で 500 になるように）",
     async (_label, override, cause) => {
       // given
@@ -1786,8 +1827,8 @@ describe("PostgresTodoRepository", () => {
       await insertHistory(row);
 
       // when
-      const findById = () => repository().findById(row.id);
-      const findForUpdate = () => load(row.id);
+      const findById = () => repository().findById(new TodoId(row.id));
+      const findForUpdate = () => load(new TodoId(row.id));
 
       // then
       await expect(findById()).rejects.toEqual(
@@ -1804,7 +1845,7 @@ describe("PostgresTodoRepository", () => {
     async (_label, override, cause) => {
       // given
       const row = invalidRow(override);
-      await insert(Todo.create("卵を買う"));
+      await insert(Todo.create(new TodoTitle("卵を買う")));
       await database.db.insert(todos).values(row);
       await insertHistory(row);
 
@@ -1863,8 +1904,8 @@ describe("PostgresTodoRepository", () => {
       );
 
       // when
-      const findById = () => repository().findById(row.id);
-      const findForUpdate = () => load(row.id);
+      const findById = () => repository().findById(new TodoId(row.id));
+      const findForUpdate = () => load(new TodoId(row.id));
       const findAll = () => repository().findAll();
 
       // then

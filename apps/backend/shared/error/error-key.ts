@@ -9,10 +9,10 @@
 //   string か number だけにする（Problem の params の型）。params の無いキーは Record<string, never>（空）にする。
 // キーを足すときはこの型に足す。画面の辞書はこの型から作るので、訳の書き忘れは画面側の型エラーで止まる。
 export type ErrorKeyParams = {
-  // Todo の不変条件（todo.ts の todoPropsSchema）。
+  // Todo の不変条件（todo.ts の todoPropsSchema）と、Todo の値オブジェクトの規則（todo-id.ts・todo-title.ts・todo-status-change.ts。Issue #423）。
   "todo.title.empty": Record<string, never>;
   "todo.title.tooLong": { max: number };
-  // title が文字列でない。presentation が z.string で弾くので、型を as で偽ったときだけ通る。
+  // title が文字列でない（TodoTitle）・Todo の title が TodoTitle でない（Todo）。presentation が z.string で弾くので、型を as で偽ったときだけ通る。
   "todo.title.invalid": Record<string, never>;
   "todo.id.invalid": Record<string, never>;
   "todo.completed.invalid": Record<string, never>;

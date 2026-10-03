@@ -22,6 +22,7 @@ import {
   isCallExpression,
   isClassLikeDeclaration,
   isClassStaticBlockDeclaration,
+  isConstructorDeclaration,
   isElementAccessExpression,
   isExportAssignment,
   isFunctionDeclaration,
@@ -2551,6 +2552,148 @@ function findStaticInInstanceClassViolations(root: string): string[] {
   );
 }
 
+// --- domain の値は値オブジェクト（VO）にする（規則 domain-value-object。Issue #423） ---
+// apps/backend/features/<f>/internal/domain/ の下のテスト以外のソースで、クラス（宣言・式、入れ子も）のフィールド（プロパティ宣言と、
+//   コンストラクタの引数のプロパティ private readonly x: string）の型注釈に string / number / bigint のキーワード型が含まれていれば、
+//   そのメンバーを「ファイル:行」で違反にする（findPrimitiveFieldsInDomainClasses）。
+// 「含まれる」は型注釈の構文木のどこかにあること: string[]・readonly string[]・string | undefined・Map<string, X>・{ a: string } も違反。
+// 許すもの: 名前が value のフィールド（VO が中身の primitive を持つフィールド。TodoTitle の readonly value: string）、boolean・Date・
+//   ほかのクラスや型の参照（TodoId・readonly TodoStatusChange[]）、リテラル型（"a" | "b"）、注釈の無いフィールド。
+// WHY 規則にする: daiki の依頼（2026-10-03）で、domain の値はできるだけ VO にしてルールにする。値の規則（長さ・形式）を持つ string を
+//   Entity のフィールドにそのまま持つと、規則が Entity のスキーマに散り、別の Entity や application が同じ値を検証せずに
+//   素の string で受け渡せる。VO のクラスにすると、型が「検証済みの値」を表し、規則が 1 か所（VO のコンストラクタ）にまとまる。
+//   決定は ADR docs/adr/architecture/20261003-value-objects-in-domain.md（以前の「branded 型は使わない」を置き換える）。
+//   レビューだけでは、Entity に string のフィールドを足す書き方が新しいコードに写されるのを止められない。
+// WHY string / number / bigint だけを止める（boolean・Date は許す）: 値の規則（長さ・範囲・形式）を持ちうるのは文字列と数で、
+//   boolean は 2 値で規則を持たず、Date は日時の型そのもの（規則があれば VO で包むが、既定では包まない）。.claude/rules/code/backend.md
+//   の「Entity」の表の「VO にしないもの」。
+// WHY 名前が value なら許す: VO は中身の primitive を 1 つのフィールドに持つ（readonly value: string）。VO と Entity を構文では
+//   見分けられないので、名前の約束（中身は value）で見分ける。
+// WHY 型注釈の全体を見る（最上位の型だけにしない）: string[]・string | undefined・readonly string[] のように合成した型で
+//   素通りさせない。
+// 限界（見逃す方向）: メソッドの引数・戻り値、アクセサ（get x(): string）、interface / type の項目、型の別名経由
+//   （type Name = string; readonly name: Name）、注釈の無いフィールドの推論（readonly x = ""）、クラスのインデックスシグネチャ（[key: string]: number）は見ない。
+//   名前が value なら Entity のフィールドでも通る。テストは対象外。
+// 限界（多く検出する方向）: 関数の型のフィールド（readonly f: (x: string) => void）や、型引数に string を持つ参照
+//   （Map<string, Todo>）も、注釈に string を含むので違反になる。
+//   名前が識別子の value だけを中身として通すので、文字列の名前（'value'）や #value のフィールドも違反になる。
+const DOMAIN_VALUE_OBJECT = {
+  id: "domain-value-object",
+  name: "apps/backend/features/<f>/internal/domain/ のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）は、型注釈に string・number・bigint を含まない（string[]・string | undefined などの合成も違反。値は VO のクラスにする。VO が中身を持つ名前 value のフィールドは可。boolean・Date・ほかのクラスや型の参照は可。テストは除く）",
+  appliesTo: (file: string) =>
+    isSourceNonTest(file) && BACKEND_FEATURE_DOMAIN_FILE.test(file),
+};
+
+// apps/backend/features/<f>/internal/domain/ の下（入れ子も）のファイル。<f> は 1 階層（features/<f>/x/internal/domain/ は対象外）。
+const BACKEND_FEATURE_DOMAIN_FILE =
+  /^apps\/backend\/features\/[^/]+\/internal\/domain\//;
+
+// VO が中身の primitive を持つフィールドの名前。
+const VALUE_OBJECT_CONTENT_NAME = "value";
+
+// 値の規則を持ちうる primitive のキーワード型（boolean は 2 値で規則を持たないので入れない）。
+const PRIMITIVE_VALUE_KEYWORDS: ReadonlySet<SyntaxKind> = new Set([
+  SyntaxKind.StringKeyword,
+  SyntaxKind.NumberKeyword,
+  SyntaxKind.BigIntKeyword,
+]);
+
+// 型注釈の構文木のどこかに PRIMITIVE_VALUE_KEYWORDS があるか。
+function containsPrimitiveValueKeyword(type: Node): boolean {
+  if (PRIMITIVE_VALUE_KEYWORDS.has(type.kind)) {
+    return true;
+  }
+  let found = false;
+  type.forEachChild((child) => {
+    found ||= containsPrimitiveValueKeyword(child);
+  });
+  return found;
+}
+
+// コンストラクタの引数のプロパティ（readonly・private・protected・public・override のどれかを付けた引数）か。
+// WHY 修飾子で見分ける: 修飾子の無い引数（props: TodoProps）はフィールドにならない。
+function isParameterProperty(parameter: Node): boolean {
+  const modifiers = (parameter as { modifiers?: readonly Node[] }).modifiers;
+  return (
+    modifiers?.some((modifier) =>
+      [
+        SyntaxKind.ReadonlyKeyword,
+        SyntaxKind.PrivateKeyword,
+        SyntaxKind.ProtectedKeyword,
+        SyntaxKind.PublicKeyword,
+        SyntaxKind.OverrideKeyword,
+      ].includes(modifier.kind),
+    ) ?? false
+  );
+}
+
+// クラスのフィールド（プロパティ宣言と、コンストラクタの引数のプロパティ）。
+function classFields(members: readonly Node[]): Node[] {
+  return members.flatMap((member): Node[] => {
+    if (isPropertyDeclaration(member)) {
+      return [member];
+    }
+    if (isConstructorDeclaration(member)) {
+      return member.parameters.filter(isParameterProperty);
+    }
+    return [];
+  });
+}
+
+// フィールドが VO の中身（名前が識別子の value）か。
+function isValueObjectContent(field: Node): boolean {
+  const name = (field as { name?: Node }).name;
+  return (
+    name !== undefined &&
+    isIdentifier(name) &&
+    name.text === VALUE_OBJECT_CONTENT_NAME
+  );
+}
+
+// 構文木の中のクラス（宣言と式。入れ子も）のフィールドのうち、型注釈に primitive を含むもの（value を除く）を、書かれた順に
+//   行番号で返す。
+function findPrimitiveFieldsInDomainClasses(sourceFile: SourceFile): number[] {
+  const found: number[] = [];
+  const visit = (node: Node): void => {
+    if (isClassLikeDeclaration(node)) {
+      for (const field of classFields(node.members)) {
+        const type = (field as { type?: Node }).type;
+        if (
+          type !== undefined &&
+          !isValueObjectContent(field) &&
+          containsPrimitiveValueKeyword(type)
+        ) {
+          found.push(lineOf(sourceFile, field));
+        }
+      }
+    }
+    node.forEachChild(visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+function listDomainValueObjectCheckedFiles(root: string): string[] {
+  return listSourceFiles(root, BACKEND_ROOT).filter(
+    DOMAIN_VALUE_OBJECT.appliesTo,
+  );
+}
+
+// 「ファイル:行」の一覧。
+function findDomainValueObjectViolations(root: string): string[] {
+  const files = listDomainValueObjectCheckedFiles(root);
+  const sourceFiles = parseSourceFiles(
+    Object.fromEntries(
+      files.map((file) => [file, readFileSync(join(root, file), "utf8")]),
+    ),
+  );
+  return files.flatMap((file) =>
+    findPrimitiveFieldsInDomainClasses(sourceFiles.get(file) as SourceFile).map(
+      (line) => `${file}:${line}`,
+    ),
+  );
+}
+
 // --- workspace パッケージの exports（規則 backend-exports。Issue #68 の段階 2。規則 shared-exports。Issue #90） ---
 // exports は、@repo/backend・@repo/shared として外（そのパッケージのディレクトリの外）に公開するファイルの一覧。
 //   ユーザー判断で、全ファイル（"./*"）ではなく、外が使う入口だけを明示する（.claude/rules/code/backend.md の「import と exports」の表の「exports」、.claude/rules/code/shared.md）。
@@ -2746,6 +2889,7 @@ function findViolations(references: Reference[], rule: Rule): string[] {
 //   「problem-response-from-only-in-problem: ファイル:行」を書いたところごとに 1 行で出す（Issue #332）。
 //   backend と apps/shared の本番コードとテストの補助の最上位の関数も「class-based: ファイル:行」を関数ごとに 1 行で出す。
 //   インスタンスで使うクラスの static メンバーも「no-static-in-instance-class: ファイル:行」をメンバーごとに 1 行で出す。
+//   domain のクラスの primitive のフィールドも「domain-value-object: ファイル:行」をフィールドごとに 1 行で出す。
 //   exports の違反は「backend-exports: ...」「shared-exports: ...」の 1 行で出す（findExportsViolations）。
 //   apps/shared の置き場所の違反は「shared-placement: ファイル」の 1 行で出す（ソース以外も含め、apps/shared の全ファイルを見る）。
 // WHY 置き場所の規則も参照を取り出すファイル（listReferencingFiles。apps/e2e/ とリポジトリ直下を含む）全体にかける:
@@ -2792,6 +2936,9 @@ function collectViolations(root: string): string[] {
     ),
     ...findStaticInInstanceClassViolations(root).map(
       (line) => `${NO_STATIC_IN_INSTANCE_CLASS.id}: ${line}`,
+    ),
+    ...findDomainValueObjectViolations(root).map(
+      (line) => `${DOMAIN_VALUE_OBJECT.id}: ${line}`,
     ),
     ...listAllFiles(root, SHARED_ROOT)
       .filter(SHARED_PLACEMENT.isMisplaced)
@@ -6945,6 +7092,217 @@ function judgeStaticInInstanceClass(examples: [string, string][]): boolean[] {
   });
 }
 
+// 規則 domain-value-object の判定の例。違反例は 1 例 1 つの書き方にする。
+const DOMAIN_TODO_FILE = "apps/backend/features/todo/internal/domain/x.ts";
+const DOMAIN_VALUE_OBJECT_EXAMPLES: {
+  violating: [file: string, source: string][];
+  allowed: [file: string, source: string][];
+} = {
+  violating: [
+    // 0: Entity の string のフィールド（VO 化する前の Todo の id・title の形）。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly title: string;", "}"),
+    ],
+    // 1: number のフィールド。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly count: number;", "}"),
+    ],
+    // 2: bigint のフィールド。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly amount: bigint;", "}"),
+    ],
+    // 3: 配列（string[]）。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly tags: string[];", "}"),
+    ],
+    // 4: readonly の配列（readonly string[]）。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly tags: readonly string[];", "}"),
+    ],
+    // 5: undefined との合併（string | undefined）。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly note: string | undefined;", "}"),
+    ],
+    // 6: 型引数（Array<number>）。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly scores: Array<number>;", "}"),
+    ],
+    // 7: コンストラクタの引数のプロパティ（private readonly）。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export class A {",
+        "  constructor(private readonly name: string) {}",
+        "}",
+      ),
+    ],
+    // 8: readonly だけの引数のプロパティ。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  constructor(readonly name: string) {}", "}"),
+    ],
+    // 9: private のフィールド（#）。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly #name: string;", "}"),
+    ],
+    // 10: クラス式。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export const A = class {", "  readonly name: string;", "};"),
+    ],
+    // 11: 関数の中の入れ子のクラス（クラスのメソッドの中）。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export class A {",
+        "  run(): void {",
+        "    class B { readonly name: string = ''; }",
+        "  }",
+        "}",
+      ),
+    ],
+    // 12: domain の下の入れ子のディレクトリと .mts。
+    [
+      "apps/backend/features/todo/internal/domain/sub/x.mts",
+      lines("export class A {", "  readonly name: string;", "}"),
+    ],
+    // 13: 別の feature の domain。
+    [
+      "apps/backend/features/feature-flag/internal/domain/x.ts",
+      lines("export class A {", "  readonly name: string;", "}"),
+    ],
+    // 14: 名前が value に似ているが value ではない（values）。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  readonly values: string;", "}"),
+    ],
+    // 15: static のフィールド。
+    [
+      DOMAIN_TODO_FILE,
+      lines("export class A {", "  static readonly prefix: string = 'x';", "}"),
+    ],
+  ],
+  allowed: [
+    // 0: VO の中身（名前が value）。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export class TodoTitle {",
+        "  readonly value: string;",
+        "  constructor(value: string) { this.value = value; }",
+        "}",
+      ),
+    ],
+    // 1: 引数のプロパティの value。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export class Count {",
+        "  constructor(readonly value: number) {}",
+        "}",
+      ),
+    ],
+    // 2: VO・boolean・Date・VO の配列を持つ Entity（VO 化した後の Todo の形）。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export class Todo {",
+        "  readonly id: TodoId;",
+        "  readonly title: TodoTitle;",
+        "  readonly completed: boolean;",
+        "  readonly createdAt: Date;",
+        "  readonly statusChanges: readonly TodoStatusChange[];",
+        "}",
+      ),
+    ],
+    // 3: 修飾子の無いコンストラクタの引数（フィールドにならない）と、メソッドの引数・戻り値（限界: 見ない）。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export class A {",
+        "  constructor(title: string) {}",
+        "  rename(title: string): string { return title; }",
+        "}",
+      ),
+    ],
+    // 4: interface・type の項目（限界: 見ない）。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export interface P { readonly title: string; }",
+        "export type Q = { readonly count: number };",
+      ),
+    ],
+    // 5: リテラル型と注釈の無いフィールド（限界: 推論は見ない）。
+    [
+      DOMAIN_TODO_FILE,
+      lines(
+        "export class A {",
+        "  readonly kind: 'a' | 'b' = 'a';",
+        "  readonly label = 'x';",
+        "}",
+      ),
+    ],
+    // 6: 対象外の domain のテスト。
+    [
+      "apps/backend/features/todo/internal/domain/x.test.ts",
+      lines("export class A {", "  readonly title: string;", "}"),
+    ],
+    // 7: 対象外の別の層（application）。
+    [
+      "apps/backend/features/todo/internal/application/x.ts",
+      lines(
+        "export class A {",
+        "  constructor(private readonly name: string) {}",
+        "}",
+      ),
+    ],
+    // 8: 対象外の backend/shared。
+    [
+      "apps/backend/shared/error/x.ts",
+      lines("export class A {", "  readonly name: string;", "}"),
+    ],
+    // 9: 対象外の internal を挟まない features/<f>/domain/（層に属さない）と、前方一致だけの domain-x/。
+    [
+      "apps/backend/features/todo/domain/x.ts",
+      lines("export class A {", "  readonly name: string;", "}"),
+    ],
+    [
+      "apps/backend/features/todo/internal/domain-x/x.ts",
+      lines("export class A {", "  readonly name: string;", "}"),
+    ],
+  ],
+};
+
+// 例をまとめて 1 回で構文解析し、例ごとに違反か（true）を返す。対象外のファイルは解析せずに false。
+function judgeDomainValueObject(examples: [string, string][]): boolean[] {
+  const virtualPath = (i: number, file: string) => `example-${i}/${file}`;
+  const sourceFiles = parseSourceFiles(
+    Object.fromEntries(
+      examples.flatMap(([file, source], i) =>
+        DOMAIN_VALUE_OBJECT.appliesTo(file)
+          ? [[virtualPath(i, file), source]]
+          : [],
+      ),
+    ),
+  );
+  return examples.map(([file], i) => {
+    const sourceFile = sourceFiles.get(virtualPath(i, file));
+    return (
+      sourceFile !== undefined &&
+      findPrimitiveFieldsInDomainClasses(sourceFile).length > 0
+    );
+  });
+}
+
 // --- exports の判定（BACKEND_EXPORTS・SHARED_EXPORTS）の仕様 ---
 // 参照 1 件ごとではなく、exports の中身と参照の集まりで決まるので、RULES の外で例を持つ。
 
@@ -7022,13 +7380,14 @@ function violationsOfFixture(files: Record<string, string>): string[] {
 // apps/shared の許可 SHARED_MODULES_BY_LAYER）の違反も置く。
 // ハードコードの文言の規則（FRONTEND_HARDCODED_TEXT・SERVER_HARDCODED_TEXT。Issue #116）と、辞書の置き場所の規則
 // （messages-colocation。Issue #125）の違反も置く。
-// 規則は全部で 39（RULES の 24 + 置き場所 3 + 環境変数の直参照 + console + 現在時刻の読み取り + exports 2 + ハードコードの文言 2 + handle を ProblemResponse.wrap で包む 1 + handle の中の try / catch 1 + ProblemResponse.from の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1）。Issue #68 で RULES に 3 規則（backend-to-frontend・
+// 規則は全部で 40（RULES の 24 + 置き場所 3 + 環境変数の直参照 + console + 現在時刻の読み取り + exports 2 + ハードコードの文言 2 + handle を ProblemResponse.wrap で包む 1 + handle の中の try / catch 1 + ProblemResponse.from の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1 + domain の値の VO 1）。Issue #68 で RULES に 3 規則（backend-to-frontend・
 // backend-relative-only・frontend-root-to-backend）を足し、段階 2 で frontend-to-backend-specifier と BACKEND_EXPORTS を足した。
 // Issue #90 で frontend-to-shared-specifier・screen-to-shared・shared-self-contained・SHARED_PLACEMENT・SHARED_EXPORTS を足した。
 // Issue #141 で presentation-with-problem-response（PRESENTATION_WITH_PROBLEM_RESPONSE）を足した。
 // Issue #208 で module-internal・module-expose-only-from-presentation・expose-imports（モジュールの境界）を足した。
 // Issue #262 で class-based（CLASS_BASED。最上位の関数）を足した。
 // Issue #300 で no-static-in-instance-class（NO_STATIC_IN_INSTANCE_CLASS。インスタンスで使うクラスの static）を足した。
+// Issue #423 で domain-value-object（DOMAIN_VALUE_OBJECT。domain のクラスの primitive のフィールド）を足した。
 // Issue #332 で handle-without-try-catch（HANDLE_WITHOUT_TRY_CATCH）と problem-response-from-only-in-problem
 //   （PROBLEM_RESPONSE_FROM_ONLY_IN_PROBLEM）を足した。
 const MUST_REJECT_FILES: Record<string, string> = {
@@ -7822,6 +8181,25 @@ const MUST_REJECT_FILES: Record<string, string> = {
     "}",
     "export class Only { static run(): void {} }",
   ),
+  // domain-value-object（Issue #423）: domain のクラスの string / number / bigint のフィールド（2〜5 行目）と引数のプロパティ
+  //   （6 行目）、クラス式（9 行目）。VO の中身の value（10 行目）・boolean・Date・VO（11〜13 行目）・修飾子の無い引数（7 行目）は拾わない。
+  "apps/backend/features/todo/internal/domain/bad-primitive.ts": lines(
+    "export class Bad {",
+    "  readonly id: string;",
+    "  readonly tags: readonly string[];",
+    "  readonly count: number | undefined;",
+    "  readonly amount: bigint;",
+    "  constructor(private readonly name: string,",
+    "    props: string) {}",
+    "}",
+    "export const Expr = class { readonly label: string = ''; };",
+    "export class Vo { constructor(readonly value: string) {} }",
+    "export class Ok { readonly title: TodoTitle;",
+    "  readonly completed: boolean;",
+    "  readonly createdAt: Date; }",
+  ),
+  "apps/backend/features/feature-flag/internal/domain/sub/bad-primitive.mts":
+    lines("export class Bad { readonly key: string = ''; }"),
   // backend-placement / frontend-placement（Issue #181）: 直下の test-support/ と前方一致だけが同じ別ディレクトリ。
   "apps/backend/test-support-x/x.ts": lines("export const x = 1;"),
   "apps/frontend_customer/test-support-x/x.ts": lines("export const x = 1;"),
@@ -7845,6 +8223,11 @@ const MUST_REJECT_VIOLATIONS = [
     (line) =>
       `no-static-in-instance-class: apps/backend/shared/drizzle/bad-static.ts:${line}`,
   ),
+  ...[2, 3, 4, 5, 6, 9].map(
+    (line) =>
+      `domain-value-object: apps/backend/features/todo/internal/domain/bad-primitive.ts:${line}`,
+  ),
+  "domain-value-object: apps/backend/features/feature-flag/internal/domain/sub/bad-primitive.mts:1",
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(
     (line) =>
       `now-single-source: apps/backend/features/todo/internal/domain/bad-now.ts:${line}`,
@@ -8374,6 +8757,30 @@ const MUST_PASS_FILES: Record<string, string> = {
     "  private helper(): number { return this.x; }",
     "}",
     "export class Only { static run(): number { return Only.helper(); } private static helper(): number { return 1; } }",
+  ),
+  // domain-value-object（Issue #423）: VO（中身は value）と VO を持つ Entity。テスト・domain の外（application・backend/shared）・
+  //   internal を挟まない features/<f>/domain/ の string のフィールドは対象外。
+  "apps/backend/features/todo/internal/domain/good-value-object.ts": lines(
+    "export class TodoTitle {",
+    "  readonly value: string;",
+    "  constructor(value: string) { this.value = value; }",
+    "}",
+    "export class Todo {",
+    "  readonly title: TodoTitle;",
+    "  readonly completed: boolean;",
+    "  readonly createdAt: Date;",
+    "  readonly statusChanges: readonly TodoTitle[];",
+    "  constructor(title: string) { this.title = new TodoTitle(title); this.completed = false; this.createdAt = new Date(0); this.statusChanges = []; }",
+    "}",
+  ),
+  "apps/backend/features/todo/internal/domain/good-value-object.test.ts": lines(
+    "export class Fake { readonly title: string = ''; }",
+  ),
+  "apps/backend/features/todo/internal/application/good-primitive.ts": lines(
+    "export class Input { constructor(private readonly title: string) {} }",
+  ),
+  "apps/backend/shared/error/good-primitive.ts": lines(
+    "export class Key { readonly key: string = ''; }",
   ),
   // presentation-with-problem-response の例外（Issue #156）: feature-flag の presentation では OfrepResponse.wrap で包んでよい
   //   （列挙から通す。MUST_REJECT_FILES の bad-ofrep-handle.api.ts の WHY）。
@@ -9367,6 +9774,40 @@ describeFeature(feature, ({ Scenario }) => {
       // 失敗時に「ファイル:行」が出るよう、一覧を空配列と比較する。
       expect(violations).toEqual([]);
     });
+
+    And(ruleStepText(DOMAIN_VALUE_OBJECT.name), () => {
+      // given: 前提なし
+      // when
+      const violations = findDomainValueObjectViolations(repoRoot);
+
+      // then
+      // 失敗時に「ファイル:行」が出るよう、一覧を空配列と比較する。
+      expect(violations).toEqual([]);
+    });
+
+    // WHY 本物の domain のファイルが列挙に入っていることを見る: 列挙（パスの判定）が壊れて 0 件になると、違反も 0 件で常に緑になる。
+    And(
+      "domain の値を VO にする規則は、apps/backend/features/<f>/internal/domain/ の本番コード（todo.ts・feature-flags.ts）を対象にし、テストと domain の外は対象にしない（列挙が壊れて素通りするのを防ぐ）",
+      () => {
+        // given: 前提なし
+        // when
+        const files = listDomainValueObjectCheckedFiles(repoRoot);
+
+        // then
+        expect(files).toEqual(
+          expect.arrayContaining([
+            "apps/backend/features/todo/internal/domain/todo.ts",
+            "apps/backend/features/feature-flag/internal/domain/feature-flags.ts",
+          ]),
+        );
+        expect(
+          files.filter(
+            (file) =>
+              TEST_FILE.test(file) || !file.includes("/internal/domain/"),
+          ),
+        ).toEqual([]);
+      },
+    );
 
     // WHY 本物のファイルが列挙に入っていることを見る: 列挙（パスの判定）が壊れて 0 件になると、違反も 0 件で常に緑になる。
     And(
@@ -10645,6 +11086,57 @@ describeFeature(feature, ({ Scenario }) => {
       );
       And(
         "許可例（NO_STATIC_IN_INSTANCE_CLASS_EXAMPLES.allowed）はどれも違反にならない",
+        () => {
+          // given
+          const cases = allowed.map(([file], i): [string, number] => [
+            `許可例 ${i}（${file}）`,
+            i,
+          ]);
+
+          // when
+          const result = casesByName(cases, ([, i]) => verdictsOf().allowed[i]);
+
+          // then
+          expect(result).toEqual(casesByName(cases, () => false));
+        },
+      );
+    },
+  );
+
+  Scenario(
+    `domain のクラスのフィールドに primitive を置かない規則の判定（${DOMAIN_VALUE_OBJECT.id}）`,
+    ({ And }) => {
+      const { violating, allowed } = DOMAIN_VALUE_OBJECT_EXAMPLES;
+      // WHY 遅延して 1 回だけ判定する: 例ごとに tsgo を起動すると遅いため（no-static-in-instance-class の判定と同じ）。
+      let verdicts: { violating: boolean[]; allowed: boolean[] } | undefined;
+      const verdictsOf = () => {
+        verdicts ??= {
+          violating: judgeDomainValueObject(violating),
+          allowed: judgeDomainValueObject(allowed),
+        };
+        return verdicts;
+      };
+      And(
+        "違反例（DOMAIN_VALUE_OBJECT_EXAMPLES.violating）はすべて違反になる",
+        () => {
+          // given
+          const cases = violating.map(([file], i): [string, number] => [
+            `違反例 ${i}（${file}）`,
+            i,
+          ]);
+
+          // when
+          const result = casesByName(
+            cases,
+            ([, i]) => verdictsOf().violating[i],
+          );
+
+          // then
+          expect(result).toEqual(casesByName(cases, () => true));
+        },
+      );
+      And(
+        "許可例（DOMAIN_VALUE_OBJECT_EXAMPLES.allowed）はどれも違反にならない",
         () => {
           // given
           const cases = allowed.map(([file], i): [string, number] => [

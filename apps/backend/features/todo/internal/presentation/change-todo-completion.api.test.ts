@@ -10,6 +10,7 @@ import {
 } from "../../../../test-support/transaction-runner.in-memory";
 import { ChangeTodoCompletionCommand } from "../application/change-todo-completion.command";
 import { Todo } from "../domain/todo";
+import { TodoTitle } from "../domain/todo-title";
 import { PostgresTodoRepository } from "../infra/todo-repository.postgres";
 import {
   ChangeTodoCompletionApi,
@@ -21,7 +22,7 @@ import {
 //   テストの順序で結果が変わるため）。
 async function setup() {
   const repository = new InMemoryTodoRepository();
-  const todo = Todo.create("牛乳を買う");
+  const todo = Todo.create(new TodoTitle("牛乳を買う"));
   await repository.insert(todo, inMemoryTransaction);
   return {
     repository,
@@ -114,21 +115,21 @@ describe("PUT /api/todos/:id/completion", () => {
 
     // when
     const response = await PUT(
-      putRequest(todo.id, JSON.stringify({ completed: true })),
-      context(todo.id),
+      putRequest(todo.id.value, JSON.stringify({ completed: true })),
+      context(todo.id.value),
     );
 
     // then
     expect(response.status).toBe(200);
     const body = (await response.json()) as ChangeTodoCompletionResponse;
     expect(body).toEqual({
-      id: todo.id,
+      id: todo.id.value,
       title: "牛乳を買う",
       completed: true,
       createdAt: todo.createdAt.toISOString(),
     });
     await expect(repository.findById(todo.id)).resolves.toMatchObject({
-      title: "牛乳を買う",
+      title: { value: "牛乳を買う" },
       completed: true,
     });
   });
@@ -138,14 +139,14 @@ describe("PUT /api/todos/:id/completion", () => {
     // given
     const { repository, todo, PUT } = await setup();
     await PUT(
-      putRequest(todo.id, JSON.stringify({ completed: true })),
-      context(todo.id),
+      putRequest(todo.id.value, JSON.stringify({ completed: true })),
+      context(todo.id.value),
     );
 
     // when
     const response = await PUT(
-      putRequest(todo.id, JSON.stringify({ completed: false })),
-      context(todo.id),
+      putRequest(todo.id.value, JSON.stringify({ completed: false })),
+      context(todo.id.value),
     );
 
     // then
@@ -160,7 +161,7 @@ describe("PUT /api/todos/:id/completion", () => {
   //   ことを、Postgres の Repository が呼ばれることで固定する。runner の run と findByIdForUpdate と update を差し替えるので DB には接続しない。
   test("本番の PUT は Postgres の runner が張ったトランザクションで、Postgres の Repository に保存する", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     // WHY runner の run を差し替える: 本番の組み立ての PostgresTransactionRunner が DB に接続しないよう、work を呼ぶだけにする。
     //   run が 1 回呼ばれ、Repository がその tx を受け取ることで、本番の command がトランザクションを張ることも確かめる。
     const run = vi
@@ -178,8 +179,8 @@ describe("PUT /api/todos/:id/completion", () => {
 
     // when
     const response = await productionPut(
-      putRequest(todo.id, JSON.stringify({ completed: true })),
-      context(todo.id),
+      putRequest(todo.id.value, JSON.stringify({ completed: true })),
+      context(todo.id.value),
     );
 
     // then
@@ -198,7 +199,7 @@ describe("PUT /api/todos/:id/completion", () => {
   //   差し替えるので DB には接続しない。
   test("本番の PUT は、未完了の Todo を完了にすると notification の expose で Todo completed: <id> を通知する（ログの 1 行）", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     vi.spyOn(PostgresTransactionRunner.prototype, "run").mockImplementation(
       (work) => work(inMemoryTransaction),
     );
@@ -211,8 +212,8 @@ describe("PUT /api/todos/:id/completion", () => {
 
     // when
     const response = await productionPut(
-      putRequest(todo.id, JSON.stringify({ completed: true })),
-      context(todo.id),
+      putRequest(todo.id.value, JSON.stringify({ completed: true })),
+      context(todo.id.value),
     );
 
     // then
@@ -222,7 +223,7 @@ describe("PUT /api/todos/:id/completion", () => {
       severity: "INFO",
       message: "notification",
       event: { name: "notification" },
-      notification: `Todo completed: ${todo.id}`,
+      notification: `Todo completed: ${todo.id.value}`,
     });
   });
 
@@ -391,14 +392,17 @@ describe("PUT /api/todos/:id/completion", () => {
       const { repository, todo, PUT } = await setup();
 
       // when
-      const response = await PUT(putRequest(todo.id, body), context(todo.id));
+      const response = await PUT(
+        putRequest(todo.id.value, body),
+        context(todo.id.value),
+      );
 
       // then
       await expectProblem(response, {
         type: "/problems/validation-error",
         title: "Validation error",
         status: 400,
-        instance: `/api/todos/${todo.id}/completion`,
+        instance: `/api/todos/${todo.id.value}/completion`,
         ...expected,
       });
       await expect(repository.findById(todo.id)).resolves.toEqual(todo);

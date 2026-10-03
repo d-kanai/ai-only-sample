@@ -45,8 +45,8 @@ export class GetTodoApi {
 
   private toResponse(todo: Todo): GetTodoResponse {
     return {
-      id: todo.id,
-      title: todo.title,
+      id: todo.id.value,
+      title: todo.title.value,
       completed: todo.completed,
       createdAt: todo.createdAt.toISOString(),
     };
