@@ -89,7 +89,7 @@ AI（Claude Code）が Issue → ブランチ → PR → マージ の流れで�
 ```
 apps/
   frontend_customer/  # @repo/frontend-customer。Next.js（app/ はルーティングだけ、features/<feature>/ に画面、shared/ に共通部品）
-  backend/            # @repo/backend。API 側（features/<feature>/ が 1 モジュールで internal/ と expose/、shared/ に共通部品、spec/ に API の仕様とジャーニー、test-support/ にテストの土台）
+  backend/            # @repo/backend。API 側（features/<feature>/ が 1 モジュールで internal/ と、他のモジュールに公開するときだけ expose/、shared/ に共通部品、spec/ に API の仕様とジャーニー、test-support/ にテストの土台）
   shared/             # @repo/shared。frontend と backend で共通の基盤（env・logger）だけ
   e2e/                # @repo/e2e。E2E（spec/ に .feature と step、support/ に土台）
 rule-tests/           # ルール検査テスト（.feature と .test.ts の対）
