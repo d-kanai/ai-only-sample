@@ -41,7 +41,7 @@ AI（Claude Code）が Issue → ブランチ → PR → マージ の流れで�
 | 種類 | ツール | 役割 | いつ |
 | --- | --- | --- | --- |
 | テスト | [Vitest](https://vitest.dev/) | 単体・API ジャーニーのテスト。カバレッジは 4 指標すべて 100% を下回ると失敗 | CI（`pnpm test`） |
-| E2E | [Playwright](https://playwright.dev/) + [playwright-bdd](https://vitalets.github.io/playwright-bdd/) | 本番ビルドをブラウザで操作して業務の流れを検証する（`apps/e2e/spec/*.feature`） | CI（下の ZAP の中で流す）・手元（`pnpm test:e2e`） |
+| E2E | [Playwright](https://playwright.dev/) + [playwright-bdd](https://vitalets.github.io/playwright-bdd/) | 本番ビルドをブラウザで操作して業務の流れを検証する（`apps/e2e/spec/*.feature`） | CI・手元（`pnpm test:e2e`） |
 | mutation testing | [Stryker](https://stryker-mutator.io/) | テストが変異（コードの一部を壊したもの）を検出できるかを測り、レポートを artifact に残す（スキル `mutation-testing`） | 毎日（`mutation.yml`。08:55 JST）・手元（`pnpm test:mutation`） |
 
 #### コード品質
@@ -65,7 +65,7 @@ AI（Claude Code）が Issue → ブランチ → PR → マージ の流れで�
 | サプライチェーン保護 | pnpm の設定（`pnpm-workspace.yaml`） | 公開から 5 日未満の版・信頼度の下がった版・推移的依存の git / URL 取得を install で拒否する | `pnpm install` のたび |
 | ワークフローのセキュリティ | [zizmor](https://github.com/zizmorcore/zizmor) | GitHub Actions のセキュリティ（スクリプトインジェクション・資格情報の残留など） | commit（ワークフローを変えたとき）・CI |
 | 設定・イメージの脆弱性 | [Trivy](https://trivy.dev/) | Dockerfile と Terraform（`infra/`）の設定ミス、ビルドしたイメージの OS パッケージの脆弱性。HIGH / CRITICAL で失敗（イメージは直した版があるものだけ） | commit（Dockerfile か `infra/` を変えたとき）・CI（設定）・デプロイ（イメージ） |
-| 動的検査（DAST） | [ZAP](https://www.zaproxy.org/) | E2E の通信をプロキシで受け、受け身の検査（passive scan）にかける。Low 以上の警告で失敗 | CI（`scan.sh zap-e2e`） |
+| 動的検査（DAST） | [ZAP](https://www.zaproxy.org/) | E2E の通信をプロキシで受けて受け身の検査（passive scan）にかけ、その記録に攻撃を送る検査（active scan）もかける。Low 以上の警告で失敗 | main の日次（`zap.yml` の `scan.sh zap-e2e`） |
 | CSP の評価 | [CSP Evaluator](https://csp-evaluator.withgoogle.com/)（npm `csp_evaluator`） | セキュリティヘッダの CSP を Google の検査で評価する（`security-headers.test.ts`） | CI（`pnpm test` に含む） |
 | AI のセキュリティレビュー | [Claude Code Action](https://github.com/anthropics/claude-code-action) | 前回から main に入った差分を Claude がレビューし、見つかったものを private の security advisory にする | 毎日（`security-review.yml`。08:47 JST） |
 
