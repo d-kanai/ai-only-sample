@@ -36,27 +36,49 @@ AI（Claude Code）が Issue → ブランチ → PR → マージ の流れで�
 * デプロイ: main への push と手動のデプロイ（`deploy.yml`）
 * 手元: 必要なときに自分で実行する
 
+#### テスト
+
+| 種類 | ツール | 役割 | いつ |
+| --- | --- | --- | --- |
+| テスト | [Vitest](https://vitest.dev/) | 単体・API ジャーニーのテスト。カバレッジは 4 指標すべて 100% を下回ると失敗 | CI（`pnpm test`） |
+| E2E | [Playwright](https://playwright.dev/) + [playwright-bdd](https://vitalets.github.io/playwright-bdd/) | 本番ビルドをブラウザで操作して業務の流れを検証する（`apps/e2e/spec/*.feature`） | CI（下の ZAP の中で流す）・手元（`pnpm test:e2e`） |
+| mutation testing | [Stryker](https://stryker-mutator.io/) | テストが変異（コードの一部を壊したもの）を検出できるかを測り、レポートを artifact に残す（スキル `mutation-testing`） | 毎日（`mutation.yml`。08:55 JST）・手元（`pnpm test:mutation`） |
+
+#### コード品質
+
 | 種類 | ツール | 役割 | いつ |
 | --- | --- | --- | --- |
 | Lint / Format | [Biome](https://biomejs.dev/) | lint と format。warn でも失敗（`--error-on-warnings`）。長さ・複雑さの上限: 関数 50 行・ファイル 300 行・引数 4 個・1 ファイル 1 クラス・認知的複雑度（`.claude/rules/quality/lint.md`） | commit（ステージ済みファイル）・CI（`pnpm lint`） |
 | 型 | [TypeScript](https://www.typescriptlang.org/)（tsc） | 型検査（ルート・`apps/backend`・`apps/shared` の 3 つ） | CI（`pnpm typecheck`） |
-| テスト | [Vitest](https://vitest.dev/) | 単体・API ジャーニーのテスト。カバレッジは 4 指標すべて 100% を下回ると失敗 | CI（`pnpm test`） |
 | ルール検査テスト | Vitest（`rule-tests/`） | 依存の向き・命名・置き場所・設定値など、規則が守られていることを検査する。依存パッケージのライセンスの許可リスト（`licenses`）もここ | CI（`pnpm test` に含む） |
-| CSP の評価 | [CSP Evaluator](https://csp-evaluator.withgoogle.com/)（npm `csp_evaluator`） | セキュリティヘッダの CSP を Google の検査で評価する（`security-headers.test.ts`） | CI（`pnpm test` に含む） |
-| E2E | [Playwright](https://playwright.dev/) + [playwright-bdd](https://vitalets.github.io/playwright-bdd/) | 本番ビルドをブラウザで操作して業務の流れを検証する（`apps/e2e/spec/*.feature`） | CI（下の ZAP の中で流す）・手元（`pnpm test:e2e`） |
-| 動的検査（DAST） | [ZAP](https://www.zaproxy.org/) | E2E の通信をプロキシで受け、受け身の検査（passive scan）にかける。Low 以上の警告で失敗 | CI（`scan.sh zap-e2e`） |
-| mutation testing | [Stryker](https://stryker-mutator.io/) | テストが変異（コードの一部を壊したもの）を検出できるかを測り、レポートを artifact に残す（スキル `mutation-testing`） | 毎日（`mutation.yml`。08:55 JST）・手元（`pnpm test:mutation`） |
+| ルールのレビュー | Claude Code のスキル `rule-review` | 機械で止めていないコード・設計ルール（`.claude/rules/code` の表の「レビュー」の行）で差分をレビューし、結果を PR に残す | 手元（PR を作った後、マージの前） |
+| ワークフローの lint | [actionlint](https://github.com/rhysd/actionlint) | GitHub Actions の構文・式・`run` の shellcheck | commit（ワークフローを変えたとき）・CI |
+| Dockerfile の lint | [hadolint](https://github.com/hadolint/hadolint) | Dockerfile の書き方。warning 以上で失敗 | commit（Dockerfile を変えたとき）・CI |
+
+#### セキュリティ
+
+| 種類 | ツール | 役割 | いつ |
+| --- | --- | --- | --- |
 | 秘密情報 | [gitleaks](https://github.com/gitleaks/gitleaks) | API キー・トークンなどの混入を検出する | commit（ステージ済みの変更）・CI（全履歴） |
 | コードの脆弱性（SAST） | [Semgrep](https://semgrep.dev/) | JavaScript / TypeScript の脆弱性のパターン（security の ERROR の規則） | push・CI |
 | 依存の脆弱性 | pnpm audit | 依存パッケージの既知の脆弱性。high 以上で失敗 | CI（`pnpm audit --audit-level high`） |
-| ワークフローの検査 | [actionlint](https://github.com/rhysd/actionlint) | GitHub Actions の構文・式・`run` の shellcheck | commit（ワークフローを変えたとき）・CI |
-| ワークフローの検査 | [zizmor](https://github.com/zizmorcore/zizmor) | GitHub Actions のセキュリティ（スクリプトインジェクション・資格情報の残留など） | commit（ワークフローを変えたとき）・CI |
-| Dockerfile の lint | [hadolint](https://github.com/hadolint/hadolint) | Dockerfile の書き方。warning 以上で失敗 | commit（Dockerfile を変えたとき）・CI |
-| 設定・イメージの脆弱性 | [Trivy](https://trivy.dev/) | Dockerfile と Terraform（`infra/`）の設定ミス、ビルドしたイメージの OS パッケージの脆弱性。HIGH / CRITICAL で失敗（イメージは直した版があるものだけ） | commit（Dockerfile か `infra/` を変えたとき）・CI（設定）・デプロイ（イメージ） |
-| AI のセキュリティレビュー | [Claude Code Action](https://github.com/anthropics/claude-code-action) | 前回から main に入った差分を Claude がレビューし、見つかったものを private の security advisory にする | 毎日（`security-review.yml`。08:47 JST） |
-| ルールのレビュー | Claude Code のスキル `rule-review` | 機械で止めていないコード・設計ルール（`.claude/rules/code` の表の「レビュー」の行）で差分をレビューし、結果を PR に残す | 手元（PR を作った後、マージの前） |
-| 依存の更新 | [Renovate](https://docs.renovatebot.com/) | npm・asdf・GitHub Actions の更新 PR を作る。公開から 5 日経った版だけ。minor / patch は CI が緑なら自動マージ（0.x と Next.js / React を除く） | 毎週月曜 00:00〜08:59 JST |
 | サプライチェーン保護 | pnpm の設定（`pnpm-workspace.yaml`） | 公開から 5 日未満の版・信頼度の下がった版・推移的依存の git / URL 取得を install で拒否する | `pnpm install` のたび |
+| ワークフローのセキュリティ | [zizmor](https://github.com/zizmorcore/zizmor) | GitHub Actions のセキュリティ（スクリプトインジェクション・資格情報の残留など） | commit（ワークフローを変えたとき）・CI |
+| 設定・イメージの脆弱性 | [Trivy](https://trivy.dev/) | Dockerfile と Terraform（`infra/`）の設定ミス、ビルドしたイメージの OS パッケージの脆弱性。HIGH / CRITICAL で失敗（イメージは直した版があるものだけ） | commit（Dockerfile か `infra/` を変えたとき）・CI（設定）・デプロイ（イメージ） |
+| 動的検査（DAST） | [ZAP](https://www.zaproxy.org/) | E2E の通信をプロキシで受け、受け身の検査（passive scan）にかける。Low 以上の警告で失敗 | CI（`scan.sh zap-e2e`） |
+| CSP の評価 | [CSP Evaluator](https://csp-evaluator.withgoogle.com/)（npm `csp_evaluator`） | セキュリティヘッダの CSP を Google の検査で評価する（`security-headers.test.ts`） | CI（`pnpm test` に含む） |
+| AI のセキュリティレビュー | [Claude Code Action](https://github.com/anthropics/claude-code-action) | 前回から main に入った差分を Claude がレビューし、見つかったものを private の security advisory にする | 毎日（`security-review.yml`。08:47 JST） |
+
+#### 依存の更新
+
+| 種類 | ツール | 役割 | いつ |
+| --- | --- | --- | --- |
+| 依存の更新 | [Renovate](https://docs.renovatebot.com/) | npm・asdf・GitHub Actions の更新 PR を作る。公開から 5 日経った版だけ。minor / patch は CI が緑なら自動マージ（0.x と Next.js / React を除く） | 毎週月曜 00:00〜08:59 JST |
+
+#### 開発の進め方
+
+| 種類 | ツール | 役割 | いつ |
+| --- | --- | --- | --- |
 | コミットメッセージ | `scripts/hooks/check-commit-msg.sh` | 4 項目（WHY / WHAT / 実装経緯 / 検証内容）と `Co-Authored-By:` の形式 | commit（commit-msg） |
 | 作業ログ | `scripts/hooks/check-work-logs-diff.sh` ほか | PR の差分に作業ログ（`docs/work-logs/`）があり、各項目に `- 機械化:` の行があること | CI（PR のとき）・Claude Code の Stop フック |
 
