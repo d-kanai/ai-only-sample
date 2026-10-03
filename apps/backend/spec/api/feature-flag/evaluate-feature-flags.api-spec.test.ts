@@ -29,7 +29,7 @@ const feature = await loadFeature("./evaluate-feature-flags.feature");
 describeFeature(feature, ({ Scenario }) => {
   Scenario("レスポンス", ({ And }) => {
     And(
-      "用意したすべての機能が、使えるかどうかと一緒に、用意した順に返る",
+      "定義したすべてのフィーチャーフラグが、オンかオフかと一緒に、定義した順に返る",
       async () => {
         // given
         const flags = { "detail-screen": true, "new-list": false };
@@ -48,28 +48,25 @@ describeFeature(feature, ({ Scenario }) => {
       },
     );
 
-    // 目印 = ETag。画面（OFREP の web provider）は前回の ETag を If-None-Match に入れて確かめ直す。
-    And(
-      "前回と同じ目印を添えて確かめ直すと、変わっていないと伝えられる",
-      async () => {
-        // given
-        const flags = { "detail-screen": true };
-        const etag = (await evaluateAll(flags, "{}")).headers.get("etag");
+    // 画面（OFREP の web provider）は前回の ETag を If-None-Match に入れて評価し直す。
+    And("前回と同じ ETag を付けて評価し直すと、変更なしと返る", async () => {
+      // given
+      const flags = { "detail-screen": true };
+      const etag = (await evaluateAll(flags, "{}")).headers.get("etag");
 
-        // when
-        const response = await evaluateAll(flags, "{}", {
-          "if-none-match": etag as string,
-        });
+      // when
+      const response = await evaluateAll(flags, "{}", {
+        "if-none-match": etag as string,
+      });
 
-        // then
-        expect(response.status).toBe(304);
-        await expect(response.text()).resolves.toBe("");
-        expect(response.headers.get("etag")).toBe(etag);
-      },
-    );
+      // then
+      expect(response.status).toBe(304);
+      await expect(response.text()).resolves.toBe("");
+      expect(response.headers.get("etag")).toBe(etag);
+    });
 
     And(
-      "前回と違う目印を添えて確かめ直すと、改めてすべての機能が返る",
+      "前回と違う ETag を付けて評価し直すと、すべてのフィーチャーフラグが返る",
       async () => {
         // given
         const flags = { "detail-screen": true };
@@ -87,7 +84,7 @@ describeFeature(feature, ({ Scenario }) => {
       },
     );
 
-    And("用意した機能が変わると、目印も変わる", async () => {
+    And("フィーチャーフラグの設定が変わると、ETag も変わる", async () => {
       // given
       const before = (
         await evaluateAll({ "detail-screen": true }, "{}")
@@ -106,23 +103,26 @@ describeFeature(feature, ({ Scenario }) => {
   });
 
   Scenario("異常系", ({ And }) => {
-    And("送った内容が読めないときは、読めないと伝えられる", async () => {
-      // given
-      const flags = { "detail-screen": true };
+    And(
+      "リクエストの本文が読めないときは、読めないというエラーが返る",
+      async () => {
+        // given
+        const flags = { "detail-screen": true };
 
-      // when
-      const response = await evaluateAll(flags, "{");
+        // when
+        const response = await evaluateAll(flags, "{");
 
-      // then
-      expect(response.status).toBe(400);
-      await expect(response.json()).resolves.toStrictEqual({
-        errorCode: "PARSE_ERROR",
-        errorDetails: "Request body must be valid JSON.",
-      });
-    });
+        // then
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toStrictEqual({
+          errorCode: "PARSE_ERROR",
+          errorDetails: "Request body must be valid JSON.",
+        });
+      },
+    );
 
     And(
-      "利用者の情報の形が正しくないときは、正しくないと伝えられる",
+      "評価コンテキストの形式が正しくないときは、形式が不正というエラーが返る",
       async () => {
         // given
         const flags = { "detail-screen": true };
