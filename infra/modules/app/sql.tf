@@ -97,7 +97,7 @@ resource "google_sql_database_instance" "main" {
       authorized_networks {
         # Data Studio（旧 Looker Studio）のサーバーの IPv4 の範囲（上の URL の「IP addresses」。データ所在地を有効にした
         #   Data Studio Pro は 142.251.56.0/24 に変わる）。
-        name  = "data-studio"
+        name = "data-studio"
         # 次の行の trivy:ignore: Data Studio の範囲を許すこと自体が GCP-0017 に当たる。ipv4_enabled の行と同じ理由で外す。
         #trivy:ignore:GCP-0017
         value = "142.251.74.0/23"
