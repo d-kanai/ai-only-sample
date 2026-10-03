@@ -33,16 +33,19 @@ paths:
 ## 置き方と環境
 対象と同じディレクトリに `<対象>.test.ts(x)`（`apps/frontend_customer/app/` には置かない）。仕様は `apps/backend/spec/`、E2E は `apps/e2e/spec/`。
 
-| 対象 | 方法 | 環境 |
-| --- | --- | --- |
-| `apps/backend/**/domain`・`apps/shared/` | 純粋な単体テスト（一時ディレクトリの `.env`・`console` の spy・`Clock.now` の `vi.mock`） | Node |
-| `apps/backend/**/application` | InMemory リポジトリを渡す | Node |
-| `apps/backend/**/infra` の `*.postgres.ts`・`database.ts` | 実 Postgres。`TestDatabase.create()` がファイルごとの別スキーマ（`test_<UUID>`）にマイグレーションを当て、各テストの前に `TRUNCATE` | Node |
-| `apps/backend/**/presentation` | 空の InMemory で組み立てた handler（`new <X>Api(new <X>Query(new InMemory<Entity>Repository())).handle`）に `new Request()`（と `ctx`）を渡し `Response` を検証。本番の handler（`export const GET` など）は結線だけ（「テストダブル」） | Node |
-| `apps/backend/spec/{domain,api,journey}/` | 下の各節 | Node |
-| `apps/frontend_customer/features/**/*.hook.ts` | `renderHook` で状態とイベント | jsdom |
-| `apps/frontend_customer/features/**/*-screen.tsx` | render して操作し、表示を検証 | jsdom |
-| `apps/e2e/spec/` | Playwright で本番ビルドを起動して操作 | Chromium |
+| カテゴリ | 対象 | 方法 | 環境 |
+| --- | --- | --- | --- |
+| Backend UT | `apps/backend/**/domain` | 純粋な単体テスト（時計は `Clock.now` の `vi.mock`） | Node |
+| Backend UT | `apps/backend/**/application` | InMemory リポジトリ（`apps/backend/test-support/<feature>/*.in-memory.ts`）を渡す | Node |
+| Backend UT | `apps/backend/**/infra` の `*.postgres.ts`・`database.ts` | 実 Postgres。`TestDatabase.create()` がファイルごとの別スキーマ（`test_<UUID>`）にマイグレーションを当て、各テストの前に `TRUNCATE` | Node |
+| Backend UT | `apps/backend/**/presentation` | 空の InMemory で組み立てた handler（`new <X>Api(new <X>Query(new InMemory<Entity>Repository())).handle`）に `new Request()`（と `ctx`）を渡し `Response` を検証。本番の handler（`export const GET` など）は結線だけ（「テストダブル」） | Node |
+| Backend 仕様 | `apps/backend/spec/domain/<feature>/<name>.domain-spec.test.ts` | Entity を直接呼ぶ（下の「domain 仕様」） | Node |
+| Backend 仕様 | `apps/backend/spec/api/<feature>/<api>.api-spec.test.ts` | 実 Postgres で本番と同じに組み立てた handler（下の「API 仕様テスト」） | Node |
+| Backend ジャーニー | `apps/backend/spec/journey/<usecase>.api-journey.test.ts` | 実 Postgres で本番と同じに組み立てた複数の handler を業務の流れの順に呼ぶ（下の「API ジャーニーテスト」） | Node |
+| Shared UT | `apps/shared/` | 純粋な単体テスト（一時ディレクトリの `.env`・`console` の spy・`Clock.now` の `vi.mock`） | Node |
+| Frontend UT | `apps/frontend_customer/features/**/*.hook.ts` | `renderHook` で状態とイベント | jsdom |
+| Frontend UT | `apps/frontend_customer/features/**/*-screen.tsx` | render して操作し、表示を検証 | jsdom |
+| E2E | `apps/e2e/spec/<name>.feature` と `<name>.steps.ts` | Playwright で本番ビルドを起動し、Chromium で操作（下の「E2E」） | Chromium |
 
 - `apps/backend/`・`apps/shared/` のテストは先頭に `// @vitest-environment node`（既定は jsdom）。
 - WHY 別スキーマ: Vitest はファイルを並列に、Stryker は複数プロセスで実行するので、同じ `public` の表では互いの `TRUNCATE` でデータが消え、`pnpm dev` や E2E の表も消える。drizzle の migrator には同時実行の排他が無い。
