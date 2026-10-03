@@ -7,7 +7,12 @@ import {
   inMemoryTransaction,
 } from "../../../../test-support/transaction-runner.in-memory";
 import { Todo } from "../domain/todo";
+import { TodoTitle } from "../domain/todo-title";
 import { ChangeTodoCompletionCommand } from "./change-todo-completion.command";
+
+// 無い Todo の id（uuid の形。presentation を通った id と同じく形は満たす。Issue #423 で id が TodoId になり、形を満たさない
+//   文字列は not_found より先に todo.id.invalid になるため）。
+const MISSING_ID = "00000000-0000-4000-8000-000000000000";
 
 // notifications: command が完了の通知に渡したメッセージ（呼ばれた順）。
 // WHY 記録するオブジェクトを渡す（vi.fn にしない）: 通知の口はコンストラクタで受け取る interface（TodoCompletedNotifier）で、
@@ -16,7 +21,7 @@ async function setup(
   transactions: TransactionRunner = new InMemoryTransactionRunner(),
 ) {
   const repository = new InMemoryTodoRepository();
-  const todo = Todo.create("牛乳を買う");
+  const todo = Todo.create(new TodoTitle("牛乳を買う"));
   await repository.insert(todo, inMemoryTransaction);
   const notifications: string[] = [];
   return {
@@ -52,12 +57,15 @@ describe("ChangeTodoCompletionCommand", () => {
     const { repository, todo, command } = await setup();
 
     // when
-    const changed = await command.execute({ id: todo.id, completed: true });
+    const changed = await command.execute({
+      id: todo.id.value,
+      completed: true,
+    });
 
     // then
     expect(changed).toMatchObject({
       id: todo.id,
-      title: "牛乳を買う",
+      title: { value: "牛乳を買う" },
       completed: true,
     });
     await expect(repository.findById(todo.id)).resolves.toEqual(changed);
@@ -67,10 +75,13 @@ describe("ChangeTodoCompletionCommand", () => {
   test("完了済みの Todo の completed を false に戻して保存する", async () => {
     // given
     const { repository, todo, command } = await setup();
-    await command.execute({ id: todo.id, completed: true });
+    await command.execute({ id: todo.id.value, completed: true });
 
     // when
-    const changed = await command.execute({ id: todo.id, completed: false });
+    const changed = await command.execute({
+      id: todo.id.value,
+      completed: false,
+    });
 
     // then
     expect(changed).toMatchObject({ id: todo.id, completed: false });
@@ -83,7 +94,10 @@ describe("ChangeTodoCompletionCommand", () => {
     const { repository, todo, command } = await setup();
 
     // when
-    const changed = await command.execute({ id: todo.id, completed: true });
+    const changed = await command.execute({
+      id: todo.id.value,
+      completed: true,
+    });
 
     // then
     expect(changed.statusChanges.map((change) => change.completed)).toEqual([
@@ -100,7 +114,10 @@ describe("ChangeTodoCompletionCommand", () => {
     const { repository, todo, command } = await setup();
 
     // when
-    const changed = await command.execute({ id: todo.id, completed: false });
+    const changed = await command.execute({
+      id: todo.id.value,
+      completed: false,
+    });
 
     // then
     expect(changed.statusChanges).toStrictEqual(todo.statusChanges);
@@ -116,35 +133,35 @@ describe("ChangeTodoCompletionCommand", () => {
     const { todo, notifications, command } = await setup();
 
     // when
-    await command.execute({ id: todo.id, completed: true });
+    await command.execute({ id: todo.id.value, completed: true });
 
     // then
-    expect(notifications).toEqual([`Todo completed: ${todo.id}`]);
+    expect(notifications).toEqual([`Todo completed: ${todo.id.value}`]);
   });
 
   // WHY 同じ要求の 2 回目は通知しない: PUT は冪等（同じ要求を 2 回送っても結果が同じ）なので、完了の通知も 1 回にする。
   test("既に完了の Todo をもう一度完了にしても、通知しない", async () => {
     // given
     const { todo, notifications, command } = await setup();
-    await command.execute({ id: todo.id, completed: true });
+    await command.execute({ id: todo.id.value, completed: true });
 
     // when
-    await command.execute({ id: todo.id, completed: true });
+    await command.execute({ id: todo.id.value, completed: true });
 
     // then
-    expect(notifications).toEqual([`Todo completed: ${todo.id}`]);
+    expect(notifications).toEqual([`Todo completed: ${todo.id.value}`]);
   });
 
   test("完了の Todo を未完了に戻しても、通知しない", async () => {
     // given
     const { todo, notifications, command } = await setup();
-    await command.execute({ id: todo.id, completed: true });
+    await command.execute({ id: todo.id.value, completed: true });
 
     // when
-    await command.execute({ id: todo.id, completed: false });
+    await command.execute({ id: todo.id.value, completed: false });
 
     // then
-    expect(notifications).toEqual([`Todo completed: ${todo.id}`]);
+    expect(notifications).toEqual([`Todo completed: ${todo.id.value}`]);
   });
 
   test("未完了の Todo を未完了にしても、通知しない", async () => {
@@ -152,7 +169,7 @@ describe("ChangeTodoCompletionCommand", () => {
     const { todo, notifications, command } = await setup();
 
     // when
-    await command.execute({ id: todo.id, completed: false });
+    await command.execute({ id: todo.id.value, completed: false });
 
     // then
     expect(notifications).toEqual([]);
@@ -165,7 +182,7 @@ describe("ChangeTodoCompletionCommand", () => {
     vi.spyOn(repository, "update").mockRejectedValue(new Error("save failed"));
 
     // when
-    const promise = command.execute({ id: todo.id, completed: true });
+    const promise = command.execute({ id: todo.id.value, completed: true });
 
     // then
     await expect(promise).rejects.toEqual(new Error("save failed"));
@@ -186,7 +203,7 @@ describe("ChangeTodoCompletionCommand", () => {
     const { todo, notifications, command } = await setup(failingCommit);
 
     // when
-    const promise = command.execute({ id: todo.id, completed: true });
+    const promise = command.execute({ id: todo.id.value, completed: true });
 
     // then
     await expect(promise).rejects.toEqual(new Error("commit failed"));
@@ -223,7 +240,10 @@ describe("ChangeTodoCompletionCommand", () => {
     );
 
     // when
-    const changed = await notifying.execute({ id: todo.id, completed: true });
+    const changed = await notifying.execute({
+      id: todo.id.value,
+      completed: true,
+    });
 
     // then
     expect(find.mock.calls).toEqual([[todo.id, inMemoryTransaction]]);
@@ -236,13 +256,13 @@ describe("ChangeTodoCompletionCommand", () => {
     const { command } = await setup();
 
     // when
-    const promise = command.execute({ id: "missing", completed: true });
+    const promise = command.execute({ id: MISSING_ID, completed: true });
 
     // then
     await expect(promise).rejects.toMatchObject({
       code: "not_found",
       key: "todo.notFound",
-      params: { id: "missing" },
+      params: { id: MISSING_ID },
     });
   });
 });

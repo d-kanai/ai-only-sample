@@ -32,7 +32,7 @@ describe("CreateTodoCommand", () => {
     ).execute({ title: " 牛乳を買う " });
 
     // then
-    expect(todo.title).toBe("牛乳を買う");
+    expect(todo.title.value).toBe("牛乳を買う");
     expect(todo.completed).toBe(false);
     await expect(repository.findById(todo.id)).resolves.toEqual(todo);
   });

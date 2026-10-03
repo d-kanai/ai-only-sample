@@ -75,8 +75,8 @@ export class ChangeTodoCompletionApi {
 
   private toResponse(todo: Todo): ChangeTodoCompletionResponse {
     return {
-      id: todo.id,
-      title: todo.title,
+      id: todo.id.value,
+      title: todo.title.value,
       completed: todo.completed,
       createdAt: todo.createdAt.toISOString(),
     };

@@ -1,6 +1,7 @@
 import type { TransactionRunner } from "../../../../shared/transaction/transaction";
 import { Todo } from "../domain/todo";
 import type { TodoRepository } from "../domain/todo-repository";
+import { TodoTitle } from "../domain/todo-title";
 
 export type CreateTodoInput = {
   title: string;
@@ -21,8 +22,10 @@ export class CreateTodoCommand {
 
   async execute(input: CreateTodoInput): Promise<Todo> {
     return this.transactions.run(async (tx) => {
-      // タイトルの検証（trim・長さ）は Todo.create が行う。ここで重ねて書かない（不変条件は domain に 1 か所）。
-      const todo = Todo.create(input.title);
+      // タイトルの検証（trim・長さ）は TodoTitle のコンストラクタが行う。ここで重ねて書かない（規則は domain に 1 か所）。
+      // WHY ここで TodoTitle を作る（Input は string のまま）: Input は presentation から届く値の形で、値オブジェクトにするのは domain に
+      //   渡す直前（Issue #423）。
+      const todo = Todo.create(new TodoTitle(input.title));
       await this.repository.insert(todo, tx);
       return todo;
     });

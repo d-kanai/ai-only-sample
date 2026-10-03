@@ -10,6 +10,7 @@ import {
 } from "../../../../test-support/transaction-runner.in-memory";
 import { RenameTodoCommand } from "../application/rename-todo.command";
 import { Todo } from "../domain/todo";
+import { TodoTitle } from "../domain/todo-title";
 import { PostgresTodoRepository } from "../infra/todo-repository.postgres";
 import {
   PUT as productionPut,
@@ -21,7 +22,7 @@ import {
 //   テストの順序で結果が変わるため）。
 async function setup() {
   const repository = new InMemoryTodoRepository();
-  const todo = Todo.create("牛乳を買う");
+  const todo = Todo.create(new TodoTitle("牛乳を買う"));
   await repository.insert(todo, inMemoryTransaction);
   return {
     repository,
@@ -106,21 +107,21 @@ describe("PUT /api/todos/:id/title", () => {
 
     // when
     const response = await PUT(
-      putRequest(todo.id, JSON.stringify({ title: "卵を買う" })),
-      context(todo.id),
+      putRequest(todo.id.value, JSON.stringify({ title: "卵を買う" })),
+      context(todo.id.value),
     );
 
     // then
     expect(response.status).toBe(200);
     const body = (await response.json()) as RenameTodoResponse;
     expect(body).toEqual({
-      id: todo.id,
+      id: todo.id.value,
       title: "卵を買う",
       completed: false,
       createdAt: todo.createdAt.toISOString(),
     });
     await expect(repository.findById(todo.id)).resolves.toMatchObject({
-      title: "卵を買う",
+      title: { value: "卵を買う" },
       completed: false,
     });
   });
@@ -139,15 +140,15 @@ describe("PUT /api/todos/:id/title", () => {
 
       // when
       const response = await PUT(
-        putRequest(todo.id, JSON.stringify({ title })),
-        context(todo.id),
+        putRequest(todo.id.value, JSON.stringify({ title })),
+        context(todo.id.value),
       );
 
       // then
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({ title: saved });
       await expect(repository.findById(todo.id)).resolves.toMatchObject({
-        title: saved,
+        title: { value: saved },
       });
     },
   );
@@ -156,7 +157,7 @@ describe("PUT /api/todos/:id/title", () => {
   //   ことを、Postgres の Repository が呼ばれることで固定する。runner の run と findByIdForUpdate と update を差し替えるので DB には接続しない。
   test("本番の PUT は Postgres の runner が張ったトランザクションで、Postgres の Repository に保存する", async () => {
     // given
-    const todo = Todo.create("牛乳を買う");
+    const todo = Todo.create(new TodoTitle("牛乳を買う"));
     // WHY runner の run を差し替える: 本番の組み立ての PostgresTransactionRunner が DB に接続しないよう、work を呼ぶだけにする。
     //   run が 1 回呼ばれ、Repository がその tx を受け取ることで、本番の command がトランザクションを張ることも確かめる。
     const run = vi
@@ -172,8 +173,8 @@ describe("PUT /api/todos/:id/title", () => {
 
     // when
     const response = await productionPut(
-      putRequest(todo.id, JSON.stringify({ title: "卵を買う" })),
-      context(todo.id),
+      putRequest(todo.id.value, JSON.stringify({ title: "卵を買う" })),
+      context(todo.id.value),
     );
 
     // then
@@ -181,7 +182,7 @@ describe("PUT /api/todos/:id/title", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0]).toEqual([
-      expect.objectContaining({ id: todo.id, title: "卵を買う" }),
+      expect.objectContaining({ id: todo.id, title: { value: "卵を買う" } }),
       inMemoryTransaction,
     ]);
   });
@@ -412,14 +413,17 @@ describe("PUT /api/todos/:id/title", () => {
       const { repository, todo, PUT } = await setup();
 
       // when
-      const response = await PUT(putRequest(todo.id, body), context(todo.id));
+      const response = await PUT(
+        putRequest(todo.id.value, body),
+        context(todo.id.value),
+      );
 
       // then
       await expectProblem(response, {
         type: "/problems/validation-error",
         title: "Validation error",
         status: 400,
-        instance: `/api/todos/${todo.id}/title`,
+        instance: `/api/todos/${todo.id.value}/title`,
         ...expected,
       });
       await expect(repository.findById(todo.id)).resolves.toEqual(todo);

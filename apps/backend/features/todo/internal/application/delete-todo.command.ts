@@ -1,4 +1,5 @@
 import type { TransactionRunner } from "../../../../shared/transaction/transaction";
+import { TodoId } from "../domain/todo-id";
 import type { TodoRepository } from "../domain/todo-repository";
 
 // Todo を削除する（command: 状態を変える）。
@@ -14,8 +15,11 @@ export class DeleteTodoCommand {
     await this.transactions.run(async (tx) => {
       // WHY 先に存在を確かめる: リポジトリの delete は無い id でも何もしない（TodoRepository の約束）。
       //   API は「無い id の削除は 404」を仕様にしているので、無ければ findByIdForUpdate が not_found を投げる。
-      await this.repository.findByIdForUpdate(id, tx);
-      await this.repository.delete(id, tx);
+      // WHY ここで TodoId を作る（引数は string のまま）: 引数は presentation から届く値の形で、値オブジェクトにするのは domain に
+      //   渡す直前（Issue #423）。presentation の ResourceId.parseUuid が uuid の形を先に確かめる（違えば 404）。
+      const todoId = new TodoId(id);
+      await this.repository.findByIdForUpdate(todoId, tx);
+      await this.repository.delete(todoId, tx);
     });
   }
 }

@@ -1,6 +1,7 @@
 import { DomainError } from "../../../../shared/error/domain-error";
 import type { Transaction } from "../../../../shared/transaction/transaction";
 import type { Todo } from "./todo";
+import type { TodoId } from "./todo-id";
 
 // Todo の永続化の窓口（interface）。
 // WHY domain に interface だけを置く: application 層は「保存できる何か」にだけ依存し、
@@ -25,7 +26,7 @@ export interface TodoRepository {
   findAll(): Promise<Todo[]>;
   // 見つからないときは undefined。「無いこと」をどう扱うか（404 にするか等）は呼び出し側が決める。
   // query（get-todo）とテストが使う。トランザクションも行ロックも無い 1 文の読み取り。
-  findById(id: string): Promise<Todo | undefined>;
+  findById(id: TodoId): Promise<Todo | undefined>;
   // command 用の読み込み。見つからないときは DomainError("not_found", "todo.notFound", { id }) を投げる（API では 404）。
   //   Postgres は根の行（todos）を tx の終わりまでロックする（FOR UPDATE。集約を読む前の別の文で取る。
   //   todo-repository.postgres.ts の findByIdForUpdate）。同じ Todo を変える別の command の
@@ -37,7 +38,7 @@ export interface TodoRepository {
   // WHY 名前を ForUpdate で終える（Issue #221 で改名）: ロック無しの findById と、呼び出し側の前提（tx が要る・
   //   同時更新が直列化される）が違うことを名前で分かるようにする。Postgres の実装の名前と .for( の有無は
   //   rule-tests/persistence.test.ts の lock-method-name-for-update が検査する。
-  findByIdForUpdate(id: string, tx: Transaction): Promise<Todo>;
+  findByIdForUpdate(id: TodoId, tx: Transaction): Promise<Todo>;
   // 新規の Todo（Todo.create から作った。origin が undefined）を書く（根と完了の履歴の全件）。同じ id があれば失敗する
   //   （Postgres は一意制約違反。新規を 2 回書くのは実装ミス）。origin がある Todo を渡すと Error（読み込み済みは update）。
   insert(todo: Todo, tx: Transaction): Promise<void>;
@@ -48,7 +49,7 @@ export interface TodoRepository {
   //   ときは失敗する（not_found にはしない。呼び出し側の誤り）。
   update(todo: Todo, tx: Transaction): Promise<void>;
   // 存在しない id でも何もしない（存在確認は呼び出し側が findByIdForUpdate で行う）。
-  delete(id: string, tx: Transaction): Promise<void>;
+  delete(id: TodoId, tx: Transaction): Promise<void>;
 }
 
 // findByIdForUpdate の共通部分: 読んだ結果が undefined なら not_found の DomainError を投げ、あればそのまま返す。
@@ -67,9 +68,11 @@ export interface TodoRepository {
 //   domain は自 feature と shared の domain だけを参照する。
 // static だけのクラス: Biome の complexity/noStaticOnlyClass は apps/backend では off（biome.json の overrides。.claude/rules/quality/lint.md）。
 export class RequiredTodo {
-  static of(todo: Todo | undefined, id: string): Todo {
+  // WHY params は id の値（文字列）: params は API の Problem Details に載り、画面が翻訳に使う契約（Issue #116）。値オブジェクトのまま
+  //   渡すと JSON の形（{ "value": ... }）が変わる。
+  static of(todo: Todo | undefined, id: TodoId): Todo {
     if (todo === undefined) {
-      throw new DomainError("not_found", "todo.notFound", { id });
+      throw new DomainError("not_found", "todo.notFound", { id: id.value });
     }
     return todo;
   }
