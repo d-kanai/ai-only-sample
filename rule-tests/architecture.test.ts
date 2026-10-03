@@ -1321,7 +1321,9 @@ const RULES: Rule[] = [
     // WHY 型だけ（import type）も違反: store の型（StoreApi など）は store のファイルから export して使わせ、zustand への依存を
     //   stores/ に閉じ込める（後でライブラリを替えるときに stores/ の中だけを直せばよい）。
     // WHY 参照元を apps/frontend_customer に限らない: backend・apps/shared・apps/e2e/ が zustand を使う理由が無い（サーバに
-    //   クライアントの状態は無い）。どこからでも stores/ の外なら違反にする。
+    //   クライアントの状態は無い）。参照を取り出すファイル（listReferencingFiles: apps/frontend_customer・apps/backend・
+    //   apps/shared・apps/e2e/ とリポジトリ直下のファイル）のうち stores/ の外なら違反にする。scripts/ などそれ以外の
+    //   ディレクトリは列挙しないので見ない（listReferencingFiles の限界）。
     // 限界: stores/ の中の状態がその置き場所に合うか（サーバのデータを入れていないか）は見ない（レビュー）。require と埋め込み式のある
     //   import() は拾わない（抽出の限界）。テストは対象外。
     id: "zustand-in-stores",
@@ -2811,6 +2813,8 @@ function importedNameOf(specifier: Node): string {
 }
 
 // "react" からの 1 つの文の、名前付きの import / re-export の指定子と、default / namespace import のローカル名。
+// WHY 名前付きの import の default（import { default as R } from "react"）も名前空間に入れる: `import R from "react"` と
+//   同じ値を束縛するので、R.useMemo を default import と同じく違反にする（書き方を替えるだけで規則を抜けさせない）。
 function reactBindingsOf(statement: Node): {
   specifiers: readonly Node[];
   names: string[];
@@ -2828,22 +2832,24 @@ function reactBindingsOf(statement: Node): {
   }
   const clause = statement.importClause;
   const bindings = clause?.namedBindings;
+  const specifiers =
+    bindings !== undefined && isNamedImports(bindings) ? bindings.elements : [];
   return {
-    specifiers:
-      bindings !== undefined && isNamedImports(bindings)
-        ? bindings.elements
-        : [],
+    specifiers,
     names: [
       ...(clause?.name !== undefined ? [clause.name.text] : []),
       ...(bindings !== undefined && isNamespaceImport(bindings)
         ? [bindings.name.text]
         : []),
+      ...specifiers
+        .filter((specifier) => importedNameOf(specifier) === "default")
+        .map((specifier) => specifier.name.text),
     ],
   };
 }
 
 // "react" の名前付きの import と re-export のうち MANUAL_MEMO_APIS の指定子と、react の名前空間として見る名前
-//   （"react" の default / namespace import のローカル名と REACT_GLOBAL_NAME）。
+//   （"react" の default / namespace import・名前付きの default（{ default as R }）のローカル名と REACT_GLOBAL_NAME）。
 function reactImportsOf(sourceFile: SourceFile): {
   memoSpecifiers: Node[];
   namespaces: Set<string>;
@@ -7702,7 +7708,15 @@ const MANUAL_MEMO_EXAMPLES: {
     ],
     // 11: 文字列の名前の import。
     [FRONTEND_COMPONENT_FILE, 'import { "memo" as m } from "react";'],
-    // 12〜15: app/・test-support/・直下のファイル・JS と ESM の拡張子も対象。
+    // 12: 名前付きの default import（{ default as R }）の名前空間の参照。
+    [
+      FRONTEND_COMPONENT_FILE,
+      lines(
+        'import { default as Rd } from "react";',
+        "export const E = () => Rd.useMemo(() => 1, []);",
+      ),
+    ],
+    // 13〜16: app/・test-support/・直下のファイル・JS と ESM の拡張子も対象。
     [
       "apps/frontend_customer/app/layout.tsx",
       'import { useMemo } from "react";',
@@ -8674,26 +8688,33 @@ const MUST_REJECT_FILES: Record<string, string> = {
   "apps/backend/features/feature-flag/internal/domain/sub/bad-primitive.mts":
     lines("export class Bad { readonly key: string = ''; }"),
   // frontend-no-manual-memo（Issue #452）: "react" の名前付きの import（ほかの名前と並べたもの・複数行の別名）、re-export、
-  //   default import と namespace import の名前空間の参照（1・4・6・7・8 行目）。useState（9 行目）は拾わない。.mts も対象。
+  //   default import（名前は React 以外の Re2）・namespace import・名前付きの default（{ default as Rd }）の名前空間の参照
+  //   （1・4・6・7・8・11 行目）。useState（9 行目）は拾わない。.mts も対象。
+  // WHY default import の名前を React にしない: React は import が無くても名前空間として見る（REACT_GLOBAL_NAME）ので、
+  //   default import のローカル名の収集を外しても検出され、収集が効いていることを fixture で確かめられない。
   "apps/frontend_customer/features/todo/components/bad-memo.tsx": lines(
-    'import React, { useMemo, useState } from "react";',
+    'import Re2, { useMemo, useState } from "react";',
     'import * as R from "react";',
     "import {",
     "  useCallback as cb,",
     '} from "react";',
     'export { memo } from "react";',
     "export const A = R.memo(() => null);",
-    "export const B = () => React.useMemo(() => 1, []);",
+    "export const B = () => Re2.useMemo(() => 1, []);",
     "export const C = () => useState(0);",
+    'import { default as Rd } from "react";',
+    "export const D = () => Rd.useCallback(() => 1, []);",
   ),
   "apps/frontend_customer/shared/bad-memo.mts": lines(
     'import { useCallback } from "react";',
   ),
-  // frontend-zod-entry（Issue #452）: 入口の外からの "zod"（値・型だけ・サブパスの re-export）。
+  // frontend-zod-entry（Issue #452）: 入口の外からの "zod"（値・型だけ・サブパスの re-export・dynamic import()）。
   "apps/frontend_customer/features/todo/components/bad-zod.ts": lines(
     'import { z } from "zod";',
     'import type { ZodType } from "zod/v4";',
     'export { z as zz } from "zod/mini";',
+    // WHY クラスのメソッドの中に書く: 最上位の関数にすると class-based の違反も巻き添えで出る。
+    'export class Loader { load() { return import("zod/v4/core"); } }',
   ),
   // zustand-in-stores（Issue #452）: stores/ の外の hook と、前方一致だけが同じ別ディレクトリ（型だけも）、backend。
   "apps/frontend_customer/features/todo/hooks/bad-store.hook.ts": lines(
@@ -8711,12 +8732,12 @@ const MUST_REJECT_FILES: Record<string, string> = {
 };
 
 const MUST_REJECT_VIOLATIONS = [
-  ...[1, 4, 6, 7, 8].map(
+  ...[1, 4, 6, 7, 8, 11].map(
     (line) =>
       `frontend-no-manual-memo: apps/frontend_customer/features/todo/components/bad-memo.tsx:${line}`,
   ),
   "frontend-no-manual-memo: apps/frontend_customer/shared/bad-memo.mts:1",
-  ...["zod", "zod/v4", "zod/mini"].map(
+  ...["zod", "zod/v4", "zod/mini", "zod/v4/core"].map(
     (to) =>
       `frontend-zod-entry: apps/frontend_customer/features/todo/components/bad-zod.ts → ${to}`,
   ),
@@ -9454,14 +9475,28 @@ const MUST_PASS_FILES: Record<string, string> = {
     lines(
       'import { todoItemMessages } from "@/features/todo/components/todo-item.messages";',
     ),
+  // 画面の hook は本物（apps/frontend_customer/features/todo/screens/*/*.hook.ts）の import の形にそろえる: サーバのデータは
+  //   TanStack Query、フォームは React Hook Form と zodResolver、z は入口 @/shared/validation/zod、react からは useState だけ。
   "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.hook.ts":
     lines(
-      'import { useEffect, useRef, useState } from "react";',
-      'import type { todoScreenMessages } from "@/features/todo/screens/todo-screen/todo-screen.messages";',
+      'import { zodResolver } from "@hookform/resolvers/zod";',
       "import {",
-      "  TodoApi,",
-      "  type Todo,",
-      '} from "@/features/todo/api/todo-api";',
+      "  type QueryClient,",
+      "  useMutation,",
+      "  useQuery,",
+      "  useQueryClient,",
+      '} from "@tanstack/react-query";',
+      'import { useState } from "react";',
+      'import { useController, useForm } from "react-hook-form";',
+      'import { useFeatureFlag } from "@/features/feature-flag";',
+      "import {",
+      "  ApiErrorMessage,",
+      "  type ErrorMessages,",
+      '} from "@/features/todo/api/api-error-message";',
+      'import { TodoApi } from "@/features/todo/api/todo-api";',
+      'import { TodoQueries } from "@/features/todo/api/todo-queries";',
+      'import { useLocale } from "@/shared/i18n/i18n";',
+      'import { z } from "@/shared/validation/zod";',
     ),
   "apps/frontend_customer/features/todo/screens/todo-detail-screen/todo-detail-screen.tsx":
     lines(
@@ -9471,11 +9506,18 @@ const MUST_PASS_FILES: Record<string, string> = {
     ),
   "apps/frontend_customer/features/todo/screens/todo-detail-screen/todo-detail-screen.hook.ts":
     lines(
-      'import { useEffect, useRef, useState } from "react";',
+      'import { zodResolver } from "@hookform/resolvers/zod";',
+      'import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";',
+      'import { useState } from "react";',
+      'import { useController, useForm } from "react-hook-form";',
       "import {",
-      "  TodoApi,",
-      "  type Todo,",
-      '} from "@/features/todo/api/todo-api";',
+      "  ApiErrorMessage,",
+      "  type ErrorMessages,",
+      '} from "@/features/todo/api/api-error-message";',
+      'import { type Todo, TodoApi } from "@/features/todo/api/todo-api";',
+      'import { TodoQueries } from "@/features/todo/api/todo-queries";',
+      'import { useLocale } from "@/shared/i18n/i18n";',
+      'import { z } from "@/shared/validation/zod";',
     ),
   // 別 feature からは index だけ（alias と相対、index の明示あり・なし）。画面側の shared/ は参照してよい。
   "apps/frontend_customer/features/other/components/uses-todo.jsx": lines(
