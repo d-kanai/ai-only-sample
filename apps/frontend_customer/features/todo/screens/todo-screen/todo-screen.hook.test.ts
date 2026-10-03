@@ -1,8 +1,10 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { useFeatureFlag } from "@/features/feature-flag";
 import { ApiError } from "@/features/todo/api/api-error";
 import { TodoApi } from "@/features/todo/api/todo-api";
+import { TodoQueries } from "@/features/todo/api/todo-queries";
 import { useTodoScreen } from "@/features/todo/screens/todo-screen/todo-screen.hook";
 import { commonMessages } from "@/shared/i18n/common.messages";
 import { formatMessage } from "@/shared/i18n/i18n";
@@ -578,6 +580,69 @@ describe("削除", () => {
     expect(TodoApi.delete).toHaveBeenCalledWith("todo-1");
     expect(TodoApi.list).toHaveBeenCalledTimes(2);
     expect(result.current.todos).toEqual([bread]);
+  });
+
+  // 一覧と詳細の画面は同じ QueryClient を使う。削除した Todo の詳細がキャッシュに残ると、詳細の画面に戻ったときに消えた Todo が
+  //   描かれ、取り直しが「無い」で失敗してもキャッシュの値が残る（TanStack Query は取得に失敗しても前の data を消さない）。
+  test("削除に成功すると、その Todo の詳細のキャッシュを捨て、ほかの Todo の詳細は残す", async () => {
+    // given
+    vi.mocked(TodoApi.list)
+      .mockResolvedValueOnce({ todos: [milk, bread] })
+      .mockResolvedValueOnce({ todos: [bread] });
+    vi.mocked(TodoApi.delete).mockResolvedValue(undefined);
+    const { result } = renderHook(
+      () => ({ screen: useTodoScreen(), client: useQueryClient() }),
+      { wrapper: JaLocale },
+    );
+    await waitFor(() => expect(result.current.screen.isLoading).toBe(false));
+    result.current.client.setQueryData(
+      TodoQueries.detail("todo-1").queryKey,
+      milk,
+    );
+    result.current.client.setQueryData(
+      TodoQueries.detail("todo-2").queryKey,
+      bread,
+    );
+
+    // when
+    await actAndFlush(() => result.current.screen.deleteTodo("todo-1"));
+
+    // then
+    expect(
+      result.current.client.getQueryData(TodoQueries.detail("todo-1").queryKey),
+    ).toBeUndefined();
+    expect(
+      result.current.client.getQueryData(TodoQueries.detail("todo-2").queryKey),
+    ).toEqual(bread);
+  });
+
+  test("削除に失敗したときは、その Todo の詳細のキャッシュを残す", async () => {
+    // given
+    vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
+    vi.mocked(TodoApi.delete).mockRejectedValue(
+      new ApiError({
+        status: 500,
+        type: "/problems/internal-error",
+        key: "server.internalError",
+      }),
+    );
+    const { result } = renderHook(
+      () => ({ screen: useTodoScreen(), client: useQueryClient() }),
+      { wrapper: JaLocale },
+    );
+    await waitFor(() => expect(result.current.screen.isLoading).toBe(false));
+    result.current.client.setQueryData(
+      TodoQueries.detail("todo-1").queryKey,
+      milk,
+    );
+
+    // when
+    await actAndFlush(() => result.current.screen.deleteTodo("todo-1"));
+
+    // then
+    expect(
+      result.current.client.getQueryData(TodoQueries.detail("todo-1").queryKey),
+    ).toEqual(milk);
   });
 
   test("前の操作のエラーは、次の操作が成功すると消える", async () => {

@@ -38,6 +38,7 @@ export function useTodoScreen() {
   // WHY フラグで出し分ける: 詳細画面を出す・隠すを、コードを戻さずに backend の一覧（FEATURE_FLAGS）の切り替えだけで行えるようにする。
   //   フラグの読み方（準備ができるまでは off で描く）は features/feature-flag/hooks/use-feature-flag.hook.ts。
   const showsDetailLink = useFeatureFlag("todo-detail-screen");
+  const queryClient = useQueryClient();
   const list = useQuery(TodoQueries.list());
   const changes = useTodoChanges();
   const newTodo = useNewTodoForm(changes.run);
@@ -70,7 +71,15 @@ export function useTodoScreen() {
       await changes.run(() => TodoApi.changeCompletion(id, completed));
     },
     deleteTodo: async (id: string) => {
-      await changes.run(() => TodoApi.delete(id));
+      const deleted = await changes.run(() => TodoApi.delete(id));
+      // 削除した Todo の詳細のキャッシュを捨てる（exact でその id だけ。ほかの Todo の詳細は残す）。
+      // WHY: 一覧と詳細の画面は同じ QueryClient を使う。残すと、詳細の画面に戻ったときに消えた Todo を描き、取り直しが「無い」で
+      //   失敗しても TanStack Query は前の data を消さないので、消えた Todo とエラーが並んで出る。失敗したときは削除されていないので残す。
+      if (deleted)
+        queryClient.removeQueries({
+          queryKey: TodoQueries.detail(id).queryKey,
+          exact: true,
+        });
     },
   };
 }
