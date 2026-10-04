@@ -57,14 +57,21 @@ import { containsForbiddenWord } from "./feature-business-language";
 //   以下は step の実装（置き場所の正しい <name>.screen-spec.test.tsx）の中身の規則:
 //   - screen-spec-operation-reads-saved: step（`Given(` / `When(` / `Then(` / `And(` / `But(` の呼び出し 1 つ）の中で利用者の操作
 //     （userEvent の click / dblClick / tripleClick / hover / unhover / tab / keyboard / pointer / type / clear / selectOptions /
-//     deselectOptions / upload / paste / copy / cut を受け手を問わず `.<名前>(` で、`fireEvent.<名前>(`）を呼ぶなら、同じ step の中に
-//     `expect(<Saved…>.<メソッド>(` か `expect(await <Saved…>.<メソッド>(` が要る（無ければ step の呼び出しの行の違反）。<Saved…> は
-//     ./support（拡張子付きも）から値で import した名前（別名なら別名）のうち Saved で始まるもの。
+//     deselectOptions / upload / paste / copy / cut を受け手を問わず `.<名前>(` で。要素の `.click()` などの DOM のメソッドも同じ名前
+//     なので操作に数える。ほかに `fireEvent.<名前>(`）を呼ぶなら、同じ step の中に `await expect(<連鎖>)` か `expect(await <連鎖>)` が
+//     要る（無ければ step の呼び出しの行の違反）。<連鎖> は <Saved…> から始まり `.read(...)` の呼び出しで終わるメンバーの連鎖
+//     （`SavedTodos.of(pool).read()`・`SavedTodos.read(pool)`）だけで、途中で止める（`SavedTodos.of(pool)`）・read を呼ばずに渡す・
+//     read の後に続ける（`.read().length`）・await しないものは数えない。<Saved…> は ./support（拡張子付きも）から値で import した
+//     名前（別名なら別名）のうち Saved で始まるもの。
 //     WHY: 画面に出ただけでは、キャッシュの書き換えだけで保存されていない誤りを見逃す。書き込みが起きる操作では変わった後の行を、
 //       起きないはずの操作（空白だけ・長すぎる・送っても再読み込みしない など）でも行が変わっていないことを確かめる（daiki の要望）。
 //     WHY expect に直接渡す: 読んだ結果を確かめることを字句で決める。変数に入れてから expect すると、何を確かめたかを追えない。
-//     限界: 操作を補助の関数の中で呼ぶ・メソッドを別名で呼ぶと操作に数えない。support の Saved… が実際に保存先を読んでいるか、
-//       expect の後の比べ方（resolves.toEqual で行を丸ごと比べているか）は見ない（reviewer が見る）。
+//     WHY read の呼び出しと await まで求める: `expect(SavedTodos.of(pool))`・`.toBeDefined()`・`.read` を渡すだけでは行を読まず、
+//       await しない read は Promise を比べるだけになる（Issue #456 の reviewer の指摘）。
+//     限界: 操作を補助の関数の中で呼ぶ・メソッドを別名で呼ぶ・`fireEvent(el, evt)` を直接呼ぶ・`form.requestSubmit()`・分割代入した
+//       `click(` は操作に数えない（見逃す方向）。逆に、操作でない呼び出しでも名前が同じなら操作に数える（`queryClient.clear()`・
+//       `map.clear()` など。違反になる方向）。support の Saved… の read が実際に保存先を読んでいるか、expect の後の比べ方
+//       （resolves.toEqual で行を丸ごと比べているか）は見ない（reviewer が見る）。
 //   - screen-spec-mock-only-navigation: `vi.mock(` / `vi.doMock(` の第 1 引数が文字列の "next/navigation" でなければ、その行の違反。
 //     WHY: 画面仕様は画面 → API → 保存先のつながりで確かめる（daiki の要望「step はモックを使わない」）。差し替えてよいのは、テストの中では
 //       動かない次の画面への遷移（next/navigation の useRouter など）だけ。
@@ -511,9 +518,7 @@ function savedReaderNames(code: string): string[] {
       .map((name) => name.trim())
       .filter((name) => name !== "" && !/^type\s/.test(name))
       .map((name) => name.split(/\s+as\s+/).pop() ?? "")
-      .filter((name) => /^Saved/.test(name))
-      // WHY $ を逃がす: 名前に使える $ は正規表現の終わりの印になる（下の readsSaved で名前を正規表現に埋め込む）。
-      .map((name) => name.replaceAll("$", "\\$")),
+      .filter((name) => /^Saved/.test(name)),
   );
 }
 
@@ -528,20 +533,61 @@ function closingParen(code: string, open: number): number {
   return code.length;
 }
 
-// screen-spec-operation-reads-saved: 利用者の操作（userEvent の click / type など・fireEvent・DOM の click）を呼ぶ step のうち、
-//   同じ step の中で ./support の Saved で始まる補助の呼び出しを expect に直接渡していないもの。行は step の呼び出しの行。
+// expect の引数（かっこの中。文字列は空白にしたもの）が、readers のどれかから始まり `.read(...)` の呼び出しで終わるメンバーの連鎖か
+//   （`SavedTodos.read(pool)`・`SavedTodos.of(pool).read()`。間の `.<名前>` と `(...)` は何個でもよい）。先頭の await は呼び出し側で外す。
+// WHY 終わりを `.read(` の呼び出しに決める: 連鎖の途中で止める（`SavedTodos.of(pool)`・`.read` を呼ばずに渡す）と行を読まず、読んだ
+//   後に続ける（`.read().length`）と読んだ行そのものを確かめない。support の Saved… は行を読むメソッドを read の名前で持つ。
+function isSavedReadChain(argument: string, readers: string[]): boolean {
+  const text = argument.trim();
+  const reader = readers.find(
+    (name) => text.startsWith(name) && !/[\w$]/.test(text.charAt(name.length)),
+  );
+  if (reader === undefined) return false;
+  let index = reader.length;
+  let lastCalled = "";
+  while (index < text.length) {
+    const member = /^\s*\.\s*([\w$]+)\s*/.exec(text.slice(index));
+    if (member === null) return false;
+    index += member[0].length;
+    lastCalled = "";
+    if (text[index] === "(") {
+      index = closingParen(text, index) + 1;
+      lastCalled = member[1] ?? "";
+      index += /^\s*/.exec(text.slice(index))?.[0].length ?? 0;
+    }
+  }
+  return lastCalled === "read";
+}
+
+// screen-spec-operation-reads-saved: 利用者の操作（userEvent の click / type など・要素の .click() などの DOM のメソッド・fireEvent。
+//   受け手を問わない `.<操作の名前>(` と `fireEvent.<名前>(`）を呼ぶ step のうち、同じ step の中で ./support の Saved で始まる補助の `.read(...)` の呼び出しを await して
+//   expect に直接渡していない（`await expect(<連鎖>)` か `expect(await <連鎖>)` でない）もの。行は step の呼び出しの行。
 // WHY 操作の受け手を問わない: userEvent.setup() の戻り値の名前は step ごとに決まらない（user・u など）ので、操作の名前で見る。
+// WHY await を求める: read は Promise を返す。await しない `expect(<連鎖>)` は Promise を比べるだけで、読んだ行を確かめない。
 function findOperationViolations(code: string): ScreenSpecViolation[] {
   const blanked = blankStrings(code);
   const readers = savedReaderNames(code);
   const operation =
     /(?:\.\s*(?:click|dblClick|tripleClick|hover|unhover|tab|keyboard|pointer|type|clear|selectOptions|deselectOptions|upload|paste|copy|cut)|\bfireEvent\s*\.\s*\w+)\s*\(/;
   const readsSaved = (step: string) =>
-    readers.some((name) =>
-      new RegExp(
-        `\\bexpect\\s*\\(\\s*(?:await\\s+)?${name}\\s*\\.\\s*\\w+\\s*\\(`,
-      ).test(step),
-    );
+    [...step.matchAll(/\bexpect\s*\(/g)].some((call) => {
+      const open = call.index + call[0].length - 1;
+      // WHY 末尾のカンマを外す: 複数行の expect( … ,) は Biome の整形で引数の後にカンマが付く。
+      const argument = step
+        .slice(open + 1, closingParen(step, open))
+        .trim()
+        .replace(/,$/, "")
+        .trim();
+      const awaitedInside = /^await\s/.exec(argument);
+      const awaitedOutside = /\bawait\s+$/.test(step.slice(0, call.index));
+      if (awaitedInside !== null) {
+        return isSavedReadChain(
+          argument.slice(awaitedInside[0].length),
+          readers,
+        );
+      }
+      return awaitedOutside && isSavedReadChain(argument, readers);
+    });
   return [...blanked.matchAll(/\b(?:Given|When|Then|And|But)\s*\(/g)]
     .filter((call) => {
       const open = call.index + call[0].length - 1;
@@ -1343,7 +1389,7 @@ describeFeature(feature, ({ Scenario }) => {
     "操作する step の保存先の確認（findStepContentViolations の screen-spec-operation-reads-saved）: must pass",
     ({ And }) => {
       And(
-        "操作する step が ./support の Saved で始まる補助の結果を expect する・操作しない step は確かめなくてよい、は違反なし（await を挟む・別名の import・拡張子付き・複数行・コメントと文字列の中の操作）",
+        "操作する step が ./support の Saved で始まる補助の結果を expect する・操作しない step は確かめなくてよい、は違反なし（await を挟む・インスタンスを作ってから読む・別名の import・拡張子付き・複数行・コメントと文字列の中の操作）",
         () => {
           // given: GOOD_STEPS の後に import と step を足す
           const importSaved = 'import { SavedTodos } from "./support";';
@@ -1382,6 +1428,30 @@ describeFeature(feature, ({ Scenario }) => {
                 'And("切り替えると保存される", async () => {',
                 "  fireEvent.click(checkbox);",
                 "  expect(await SavedRows.read(database.pool)).toEqual([]);",
+                "});",
+              ],
+            ],
+            [
+              "インスタンスを作ってから読む（of(...).read()）",
+              [
+                importSaved,
+                'And("追加すると保存される", async () => {',
+                "  await user.click(addButton());",
+                "  await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([]);",
+                "});",
+              ],
+            ],
+            [
+              "複数行の連鎖を await して渡す（末尾のカンマ）",
+              [
+                importSaved,
+                'And("追加すると保存される", async () => {',
+                "  await user.click(addButton());",
+                "  expect(",
+                "    await SavedTodos",
+                "      .of(database.pool)",
+                "      .read(),",
+                "  ).toEqual([]);",
                 "});",
               ],
             ],
@@ -1434,7 +1504,7 @@ describeFeature(feature, ({ Scenario }) => {
     "操作する step の保存先の確認（findStepContentViolations の screen-spec-operation-reads-saved）: must reject",
     ({ And }) => {
       And(
-        "操作する step が保存先を読まない・読んでも expect に直接渡さない・ほかの step だけが読む・./support の外や型だけの import や Saved で始まらない名前の補助を使うと、その step の違反になる（fireEvent・別の名前の受け手・When と Given の step）",
+        "操作する step が保存先を読まない・読む呼び出しを await して expect に直接渡さない（読む前で止める・await しない・読んだ後に続ける）・ほかの step だけが読む・./support の外や型だけの import や Saved で始まらない名前の補助を使うと、その step の違反になる（fireEvent・別の名前の受け手・When と Given の step）",
         () => {
           // given: GOOD_STEPS（8 行）の後に足す。違反の行は操作する step の呼び出しの行。
           const importSaved = 'import { SavedTodos } from "./support";';
@@ -1475,6 +1545,72 @@ describeFeature(feature, ({ Scenario }) => {
                 "});",
               ],
               13,
+            ],
+            [
+              "補助のインスタンスを作るだけで読まない",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  expect(SavedTodos.of(database.pool));",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "補助のインスタンスを作るだけで読まず、別の比べ方をする",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  expect(SavedTodos.of(database.pool)).toBeDefined();",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "読むメソッドを呼ばずに渡す",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  expect(SavedTodos.of(database.pool).read);",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "読むメソッドを呼んでも await しない",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  expect(SavedTodos.of(database.pool).read()).toEqual([]);",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "await しても読むメソッドを呼ばない",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  expect(await SavedTodos.of(database.pool)).toBeDefined();",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "読んだ結果の続きを expect に渡す（expect の引数が読む呼び出しで終わらない）",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  expect(await SavedTodos.of(database.pool).read().length);",
+                "});",
+              ],
+              10,
             ],
             [
               "./support の外から import した補助",

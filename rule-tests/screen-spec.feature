@@ -16,9 +16,9 @@ Feature: 画面仕様の置き場所と書き方
     * 遷移でないモック・feature の api と InMemory の import・skip と対でない読み込みは、その行の違反になる（vi.doMock・api の import type と dynamic import()・相対パスの api・別名の loadFeature など）
     * 実 DB の準備・fetch の差し替え・対の .feature の読み込みが無ければ、ファイルの違反になる（型だけの import・名前の一部だけが同じ別のモジュール・import しても installAsAppDatabase と RouteFetch.install を呼ばない）
   Scenario: 操作する step の保存先の確認（findStepContentViolations の screen-spec-operation-reads-saved）: must pass
-    * 操作する step が ./support の Saved で始まる補助の結果を expect する・操作しない step は確かめなくてよい、は違反なし（await を挟む・別名の import・拡張子付き・複数行・コメントと文字列の中の操作）
+    * 操作する step が ./support の Saved で始まる補助の結果を expect する・操作しない step は確かめなくてよい、は違反なし（await を挟む・インスタンスを作ってから読む・別名の import・拡張子付き・複数行・コメントと文字列の中の操作）
   Scenario: 操作する step の保存先の確認（findStepContentViolations の screen-spec-operation-reads-saved）: must reject
-    * 操作する step が保存先を読まない・読んでも expect に直接渡さない・ほかの step だけが読む・./support の外や型だけの import や Saved で始まらない名前の補助を使うと、その step の違反になる（fireEvent・別の名前の受け手・When と Given の step）
+    * 操作する step が保存先を読まない・読む呼び出しを await して expect に直接渡さない（読む前で止める・await しない・読んだ後に続ける）・ほかの step だけが読む・./support の外や型だけの import や Saved で始まらない名前の補助を使うと、その step の違反になる（fireEvent・別の名前の受け手・When と Given の step）
   Scenario: 画面仕様の列挙と検査（fixture）
     * apps/frontend_customer の下の .feature・step の実装・画面と spec/ の下のファイルを対象にし（依存・ビルドの出力は除く）、違反を「規則: パス(:行)（理由）」で返す
     * apps/frontend_customer が無ければ対象は 0 件（本番の検査は 0 件を失敗にする）
