@@ -2314,6 +2314,106 @@ function findProblemResponseFromViolations(root: string): string[] {
   );
 }
 
+// --- AppDatabase.use / AppDatabase.release を書いてよいのはテストとテストの補助だけ（規則 app-database-swap-only-in-tests。Issue #456） ---
+// apps/backend・apps/frontend_customer・apps/shared の本番コード（テストとテストの補助 apps/<アプリ>/test-support/ は除く）は、
+//   AppDatabase.use / AppDatabase.release を書かない（呼び出し・呼ばない参照・ブラケット AppDatabase["use"]・名前空間の経由
+//   drizzle.AppDatabase.release）。行は AppDatabase.use / release の書き出し。
+// WHY 規則にする: use / release は、画面仕様が本番の handler の接続をテスト用のスキーマにするための差し替え口
+//   （apps/backend/test-support/database.ts の TestDatabase.installAsAppDatabase）で、本番クラスの public static にある。
+//   本番コードが release を呼ぶとプールを閉じずに手放し（次の AppDatabase.get が新しいプールを作る）、接続が漏れる。use を呼ぶと、
+//   env の設定ではない接続を全 api に渡せる。コメントと backend.md の説明だけでは止まらない（Issue #456 の reviewer 指摘）。
+// WHY テストとテストの補助を除く: 差し替える側（TestDatabase）と、use / release 自身のテスト（database.test.ts）が呼ぶ。
+//   test-support/ は .dockerignore でイメージに入らず、本番からの import は production-imports-test-support が止める。
+// WHY apps/backend/spec/ の support.ts も対象にする: テスト専用だが test-support/ ではなく、差し替えは TestDatabase の 1 か所に
+//   集める（API 仕様は handler を TestDatabase.create() の db で組み立て、AppDatabase を差し替えない）。
+// WHY 名前（AppDatabase という名前の受け手の use / release）だけで見る: import 元を確かめない（problem-response-from-only-in-problem と
+//   同じ）。同じ名前の別のクラスの use / release も違反になる（多く検出する方向）。
+// 対象: apps/backend・apps/frontend_customer・apps/shared の下のテスト以外のソース（8 つの拡張子）のうち、test-support/ の外。
+//   database.ts（定義の側）も対象（定義はメソッドの宣言で、参照ではないので拾わない）。
+// 限界（見逃す方向）: 別名で import したクラス（import { AppDatabase as D } の D.use）、分割代入（const { release } = AppDatabase）、
+//   変数に入れ直したクラス、かっこや非 null 表明で包んだ受け手、型の位置、apps/e2e・scripts・リポジトリ直下は見ない（レビューで見る）。
+const APP_DATABASE_CLASS = "AppDatabase";
+const APP_DATABASE_SWAP_METHODS: ReadonlySet<string> = new Set([
+  "use",
+  "release",
+]);
+const APP_DATABASE_SWAP_CHECK_DIRS = [FRONTEND_ROOT, BACKEND_ROOT, SHARED_ROOT];
+
+const APP_DATABASE_SWAP_ONLY_IN_TESTS = {
+  id: "app-database-swap-only-in-tests",
+  name: "AppDatabase.use と AppDatabase.release を書いてよいのはテストとテストの補助（apps/<アプリ>/test-support/）だけ（apps/backend・apps/frontend_customer・apps/shared の本番コードが対象。本番コードが release を呼ぶとプールを閉じずに手放し、接続が漏れる）",
+  appliesTo: (file: string) =>
+    isSourceNonTest(file) &&
+    !TEST_SUPPORT_FILE.test(file) &&
+    APP_DATABASE_SWAP_CHECK_DIRS.some((dir) => isUnder(file, dir)),
+};
+
+// node が AppDatabase という名前の受け手（識別子か、名前空間などのプロパティアクセスの末尾）か。
+function isAppDatabaseReceiver(node: Node): boolean {
+  if (isIdentifier(node)) {
+    return node.text === APP_DATABASE_CLASS;
+  }
+  return (
+    isPropertyAccessExpression(node) &&
+    isIdentifier(node.name) &&
+    node.name.text === APP_DATABASE_CLASS
+  );
+}
+
+// node が AppDatabase.use / AppDatabase.release（ブラケットも）か。
+function isAppDatabaseSwap(node: Node): boolean {
+  if (isPropertyAccessExpression(node)) {
+    return (
+      isIdentifier(node.name) &&
+      APP_DATABASE_SWAP_METHODS.has(node.name.text) &&
+      isAppDatabaseReceiver(node.expression)
+    );
+  }
+  if (!isElementAccessExpression(node)) {
+    return false;
+  }
+  const member = literalTextOf(node.argumentExpression);
+  return (
+    member !== undefined &&
+    APP_DATABASE_SWAP_METHODS.has(member) &&
+    isAppDatabaseReceiver(node.expression)
+  );
+}
+
+// 構文木の中の AppDatabase.use / release の行番号（書かれた順）。
+function findAppDatabaseSwaps(sourceFile: SourceFile): number[] {
+  const found: number[] = [];
+  const visit = (node: Node): void => {
+    if (isAppDatabaseSwap(node)) {
+      found.push(lineOf(sourceFile, node));
+    }
+    node.forEachChild(visit);
+  };
+  visit(sourceFile);
+  return found;
+}
+
+function listAppDatabaseSwapCheckedFiles(root: string): string[] {
+  return listAllSourceFiles(root).filter(
+    APP_DATABASE_SWAP_ONLY_IN_TESTS.appliesTo,
+  );
+}
+
+// 「ファイル:行」の一覧。
+function findAppDatabaseSwapViolations(root: string): string[] {
+  const files = listAppDatabaseSwapCheckedFiles(root);
+  const sourceFiles = parseSourceFiles(
+    Object.fromEntries(
+      files.map((file) => [file, readFileSync(join(root, file), "utf8")]),
+    ),
+  );
+  return files.flatMap((file) =>
+    findAppDatabaseSwaps(sourceFiles.get(file) as SourceFile).map(
+      (line) => `${file}:${line}`,
+    ),
+  );
+}
+
 // --- backend と apps/shared の本番コードとテストの補助、frontend の React 以外のモジュールはクラスを基本にする（規則 class-based。Issue #262） ---
 // apps/backend と apps/shared の本番コード、テストの補助（apps/backend/test-support/・apps/backend/spec/ の support.ts・apps/e2e/ の
 //   spec 以外）は、ファイルの最上位（モジュールの直下と namespace の中）に関数を置かない。補助の関数もクラスのメソッド（状態を
@@ -3119,6 +3219,8 @@ function findViolations(references: Reference[], rule: Rule): string[] {
 //   ProblemResponse.wrap で包んでいない handle も「presentation-with-problem-response: ファイル:行」を handle ごとに 1 行で出す。
 //   handle の中の try / catch も「handle-without-try-catch: ファイル:行」を try 文ごとに、problem.ts の外の ProblemResponse.from も
 //   「problem-response-from-only-in-problem: ファイル:行」を書いたところごとに 1 行で出す（Issue #332）。
+//   テストとテストの補助の外の AppDatabase.use / release も「app-database-swap-only-in-tests: ファイル:行」を書いたところごとに
+//   1 行で出す（Issue #456）。
 //   backend と apps/shared の本番コードとテストの補助の最上位の関数も「class-based: ファイル:行」を関数ごとに 1 行で出す。
 //   インスタンスで使うクラスの static メンバーも「no-static-in-instance-class: ファイル:行」をメンバーごとに 1 行で出す。
 //   domain のクラスの primitive のフィールドも「domain-value-object: ファイル:行」をフィールドごとに 1 行で出す。
@@ -3163,6 +3265,9 @@ function collectViolations(root: string): string[] {
     ),
     ...findProblemResponseFromViolations(root).map(
       (line) => `${PROBLEM_RESPONSE_FROM_ONLY_IN_PROBLEM.id}: ${line}`,
+    ),
+    ...findAppDatabaseSwapViolations(root).map(
+      (line) => `${APP_DATABASE_SWAP_ONLY_IN_TESTS.id}: ${line}`,
     ),
     ...findClassBasedViolations(root).map(
       (line) => `${CLASS_BASED.id}: ${line}`,
@@ -6760,6 +6865,129 @@ const PROBLEM_RESPONSE_FROM_EXAMPLES: {
   ],
 };
 
+// AppDatabase.use / release をテストとテストの補助だけに書く規則（APP_DATABASE_SWAP_ONLY_IN_TESTS。Issue #456）の判定例。
+// WHY 架空のソースで固定する: 今のリポジトリでは test-support とテストにしか無いので、判定が常に「違反なし」でも実ファイルの検査は通る。
+const APP_DATABASE_SWAP_EXAMPLES: {
+  violating: [file: string, source: string][];
+  allowed: [file: string, source: string][];
+} = {
+  violating: [
+    // 0: 本番の api ファイルで release を呼ぶ（プールを閉じずに手放す。Issue #456 の reviewer 指摘の形）。
+    [
+      API_FILE,
+      "export class XApi { reset(): void { AppDatabase.release(); } }",
+    ],
+    // 1: use を呼ぶ。
+    [
+      "apps/backend/features/todo/internal/infra/x.ts",
+      "export class X { swap(handle: unknown): void { AppDatabase.use(handle); } }",
+    ],
+    // 2: 呼ばずに参照する（変数に入れてから呼ぶ）。
+    [
+      "apps/backend/features/todo/internal/infra/x.ts",
+      "export class X { private readonly drop = AppDatabase.release; }",
+    ],
+    // 3: ブラケット（文字列リテラルとテンプレートリテラル）。
+    [
+      "apps/backend/features/todo/internal/infra/x.ts",
+      'export class X { private readonly swap = AppDatabase["use"]; }',
+    ],
+    [
+      "apps/backend/features/todo/internal/infra/x.ts",
+      "export class X { private readonly drop = AppDatabase[`release`]; }",
+    ],
+    // 5: 名前空間の import の経由。
+    [
+      "apps/backend/features/todo/internal/infra/x.ts",
+      lines(
+        'import * as drizzle from "../../../../shared/drizzle/database";',
+        "export class X { reset(): void { drizzle.AppDatabase.release(); } }",
+      ),
+    ],
+    // 6〜8: 定義の database.ts の中・drizzle/ のほかのファイル（.mts）・frontend と apps/shared の本番コード。
+    [
+      "apps/backend/shared/drizzle/database.ts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+    [
+      "apps/backend/shared/drizzle/x.mts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+    [
+      "apps/frontend_customer/features/todo/api/x.ts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+    [
+      "apps/shared/x.ts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+    // 10: テスト専用でも test-support/ の外（API 仕様の support.ts）。
+    [
+      "apps/backend/spec/api/todo/support.ts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+    // 11〜12: test-support の名前の前方一致だけが同じ場所と、アプリの直下でない test-support/。
+    [
+      "apps/backend/test-support-x/x.ts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+    [
+      "apps/backend/shared/test-support/x.ts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+  ],
+  allowed: [
+    // 本物の定義（database.ts。メソッドの宣言と、文言の中の AppDatabase.use()）・差し替える側（test-support/database.ts）・
+    //   use / release 自身のテスト（database.test.ts）。
+    ...[
+      "apps/backend/shared/drizzle/database.ts",
+      "apps/backend/test-support/database.ts",
+      "apps/backend/shared/drizzle/database.test.ts",
+    ].map((file): [string, string] => [
+      file,
+      readFileSync(join(repoRoot, file), "utf8"),
+    ]),
+    // 本物の api ファイル 8 本（AppDatabase.get().db で組み立てる）。
+    ...REAL_API_FILES.map((file): [string, string] => [
+      file,
+      readFileSync(join(repoRoot, file), "utf8"),
+    ]),
+    // AppDatabase のほかのメソッド、ほかのクラスの use / release、名前の前方一致（useX・released）、コメント・文字列の中。
+    [
+      "apps/backend/features/todo/internal/infra/x.ts",
+      lines(
+        "export class X {",
+        "  private readonly db = AppDatabase.get().db;",
+        "  async stop(): Promise<void> { await AppDatabase.close(); }",
+        "  private readonly a = [Other.use, Other.release, AppDatabase.useX, AppDatabase.released, MyAppDatabase.release];",
+        "  // AppDatabase.release() is for tests only",
+        '  private readonly s = "AppDatabase.use(handle)";',
+        "}",
+      ),
+    ],
+    // テストの補助（backend と frontend の test-support/）・テスト（backend の単体・画面仕様の step）。
+    [
+      "apps/backend/test-support/x.ts",
+      "export class X { reset(): void { AppDatabase.release(); } }",
+    ],
+    [
+      "apps/frontend_customer/test-support/x.ts",
+      "export class X { swap(handle: unknown): void { AppDatabase.use(handle); } }",
+    ],
+    [
+      "apps/backend/shared/drizzle/x.test.ts",
+      "AppDatabase.use(handle); AppDatabase.release();",
+    ],
+    [
+      "apps/frontend_customer/features/todo/screens/todo/todo.screen-spec.test.tsx",
+      "AppDatabase.use(handle); AppDatabase.release();",
+    ],
+    // 対象外: apps/e2e（別プロセスのサーバを外から操作する）と scripts/。
+    ["apps/e2e/support/x.ts", "AppDatabase.release();"],
+    ["scripts/x.ts", "AppDatabase.release();"],
+  ],
+};
+
 // [ファイル, ソース] の例をまとめて 1 回で構文解析し、例ごとに違反か（find が 1 件以上返すか）を返す。対象外のファイルは解析せずに false。
 function judgeSourceExamples(
   examples: [string, string][],
@@ -7866,7 +8094,7 @@ function violationsOfFixture(files: Record<string, string>): string[] {
 // apps/shared の許可 SHARED_MODULES_BY_LAYER）の違反も置く。
 // ハードコードの文言の規則（FRONTEND_HARDCODED_TEXT・SERVER_HARDCODED_TEXT。Issue #116）と、辞書の置き場所の規則
 // （messages-colocation。Issue #125）の違反も置く。
-// 規則は全部で 43（RULES の 26 + 置き場所 3 + 環境変数の直参照 + console + 現在時刻の読み取り + exports 2 + ハードコードの文言 2 + handle を ProblemResponse.wrap で包む 1 + handle の中の try / catch 1 + ProblemResponse.from の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1 + domain の値の VO 1 + 手の memo 1）。Issue #68 で RULES に 3 規則（backend-to-frontend・
+// 規則は全部で 44（RULES の 26 + 置き場所 3 + 環境変数の直参照 + console + 現在時刻の読み取り + exports 2 + ハードコードの文言 2 + handle を ProblemResponse.wrap で包む 1 + handle の中の try / catch 1 + ProblemResponse.from の置き場所 1 + AppDatabase.use / release の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1 + domain の値の VO 1 + 手の memo 1）。Issue #68 で RULES に 3 規則（backend-to-frontend・
 // backend-relative-only・frontend-root-to-backend）を足し、段階 2 で frontend-to-backend-specifier と BACKEND_EXPORTS を足した。
 // Issue #90 で frontend-to-shared-specifier・screen-to-shared・shared-self-contained・SHARED_PLACEMENT・SHARED_EXPORTS を足した。
 // Issue #141 で presentation-with-problem-response（PRESENTATION_WITH_PROBLEM_RESPONSE）を足した。
@@ -7877,6 +8105,7 @@ function violationsOfFixture(files: Record<string, string>): string[] {
 // Issue #452 で frontend-zod-entry・zustand-in-stores（RULES）と frontend-no-manual-memo（FRONTEND_NO_MANUAL_MEMO。手の memo）を足した。
 // Issue #332 で handle-without-try-catch（HANDLE_WITHOUT_TRY_CATCH）と problem-response-from-only-in-problem
 //   （PROBLEM_RESPONSE_FROM_ONLY_IN_PROBLEM）を足した。
+// Issue #456 で app-database-swap-only-in-tests（APP_DATABASE_SWAP_ONLY_IN_TESTS。AppDatabase.use / release）を足した。
 const MUST_REJECT_FILES: Record<string, string> = {
   // class-based（Issue #262）: 最上位の関数（function 宣言・async・generator・オーバーロード・アロー関数と function 式の
   //   変数・export default のアロー関数・namespace の中）。クラスのメソッド・フィールド・メソッドの中の関数（8〜13 行目）は拾わない。
@@ -7972,6 +8201,25 @@ const MUST_REJECT_FILES: Record<string, string> = {
       "  private readonly helper = () => { try { return 1; } catch { return 2; } };",
       "}",
     ),
+  // app-database-swap-only-in-tests（Issue #456）: test-support/ とテストの外の AppDatabase.use / release（呼び出し・参照・
+  //   ブラケット・名前空間の経由）。AppDatabase のほかのメソッドとほかのクラスの release（7 行目）は拾わない。frontend の本番コード、
+  //   test-support の名前の前方一致だけが同じ場所（backend-placement の違反にもなる）も対象。
+  "apps/backend/features/todo/internal/infra/bad-app-database.ts": lines(
+    'import * as drizzle from "../../../../shared/drizzle/database";',
+    "export class BadAppDatabase {",
+    "  swap(handle: unknown): void { AppDatabase.use(handle); }",
+    "  reset(): void { AppDatabase.release(); }",
+    '  bracket(): unknown { return AppDatabase["release"]; }',
+    "  namespaced(): void { drizzle.AppDatabase.release(); }",
+    "  other(): unknown { return [AppDatabase.get(), AppDatabase.close, Other.release]; }",
+    "}",
+  ),
+  "apps/frontend_customer/features/todo/api/bad-app-database.ts": lines(
+    "export class BadAppDatabase { reset(): void { AppDatabase.release(); } }",
+  ),
+  "apps/backend/test-support-x/bad-app-database.ts": lines(
+    "export class BadAppDatabase { reset(): void { AppDatabase.release(); } }",
+  ),
   // problem-response-from-only-in-problem（Issue #332）: problem.ts の外の ProblemResponse.from（呼び出し・参照・ブラケット・
   //   名前空間の経由）。ほかのクラスの from・ProblemResponse.wrap（8 行目）は拾わない。bad-handle.api.ts の 7 行目も違反。
   "apps/backend/features/todo/internal/application/bad-problem-from.ts": lines(
@@ -8797,6 +9045,13 @@ const MUST_REJECT_VIOLATIONS = [
   ),
   "problem-response-from-only-in-problem: apps/backend/features/todo/internal/presentation/bad-handle.api.ts:7",
   "problem-response-from-only-in-problem: apps/backend/shared/http/problem-x.ts:2",
+  ...[3, 4, 5, 6].map(
+    (line) =>
+      `app-database-swap-only-in-tests: apps/backend/features/todo/internal/infra/bad-app-database.ts:${line}`,
+  ),
+  "app-database-swap-only-in-tests: apps/frontend_customer/features/todo/api/bad-app-database.ts:1",
+  "app-database-swap-only-in-tests: apps/backend/test-support-x/bad-app-database.ts:1",
+  "backend-placement: apps/backend/test-support-x/bad-app-database.ts",
   "frontend-placement: apps/frontend_customer/lib/db.ts",
   "frontend-placement: apps/frontend_customer/.lib/x.ts",
   "frontend-placement: apps/frontend_customer/next.config.mjs",
@@ -9565,6 +9820,21 @@ const MUST_PASS_FILES: Record<string, string> = {
     "    return async (request: Request) => { try { return await handler(request); } catch (error) { return ProblemResponse.from(error, request); } };",
     "  }",
     "}",
+  ),
+  // app-database-swap-only-in-tests（Issue #456）: テストの補助（backend と frontend の test-support/）とテストでは、
+  //   AppDatabase.use / release を書いてよい。
+  "apps/backend/test-support/app-database-swap.ts": lines(
+    "export class AppDatabaseSwap {",
+    "  install(handle: unknown): void { AppDatabase.use(handle); }",
+    "  uninstall(): void { AppDatabase.release(); }",
+    "}",
+  ),
+  "apps/frontend_customer/test-support/app-database-swap.ts": lines(
+    "export class AppDatabaseSwap { uninstall(): void { AppDatabase.release(); } }",
+  ),
+  "apps/backend/shared/drizzle/app-database-swap.test.ts": lines(
+    "AppDatabase.use(handle);",
+    "AppDatabase.release();",
   ),
   // problem-response-from-only-in-problem（Issue #332）: テストは対象外。
   "apps/backend/shared/http/problem.test.ts": lines(
@@ -10345,6 +10615,40 @@ describeFeature(feature, ({ Scenario }) => {
         expect(
           files.filter(
             (file) => TEST_FILE.test(file) || file === PROBLEM_RESPONSE_FILE,
+          ),
+        ).toEqual([]);
+      },
+    );
+
+    And(ruleStepText(APP_DATABASE_SWAP_ONLY_IN_TESTS.name), () => {
+      // given: 前提なし
+      // when
+      const violations = findAppDatabaseSwapViolations(repoRoot);
+
+      // then
+      // 失敗時に「ファイル:行」が出るよう、一覧を空配列と比較する。
+      expect(violations).toEqual([]);
+    });
+
+    // WHY 本物の api ファイルと database.ts が列挙に入っていて、test-support/ とテストが入っていないことを見る: 列挙が壊れて 0 件に
+    //   なると常に緑になり、test-support/database.ts が入ると差し替えの呼び出しで常に落ちる。
+    And(
+      "AppDatabase.use と release の規則は、本物の api ファイル 8 本と database.ts を対象にし、test-support/ とテストは対象にしない（列挙が壊れて素通りするのを防ぐ）",
+      () => {
+        // given: 前提なし
+        // when
+        const files = listAppDatabaseSwapCheckedFiles(repoRoot);
+
+        // then
+        expect(files).toEqual(
+          expect.arrayContaining([
+            ...REAL_API_FILES,
+            "apps/backend/shared/drizzle/database.ts",
+          ]),
+        );
+        expect(
+          files.filter(
+            (file) => TEST_FILE.test(file) || TEST_SUPPORT_FILE.test(file),
           ),
         ).toEqual([]);
       },
@@ -11582,6 +11886,65 @@ describeFeature(feature, ({ Scenario }) => {
       );
       And(
         "許可例（PROBLEM_RESPONSE_FROM_EXAMPLES.allowed）はどれも違反にならない",
+        () => {
+          // given
+          const cases = allowed.map(([file], i): [string, number] => [
+            `許可例 ${i}（${file}）`,
+            i,
+          ]);
+
+          // when
+          const result = casesByName(cases, ([, i]) => verdictsOf().allowed[i]);
+
+          // then
+          expect(result).toEqual(casesByName(cases, () => false));
+        },
+      );
+    },
+  );
+
+  Scenario(
+    `AppDatabase.use と release をテストとテストの補助だけに書く規則の判定（${APP_DATABASE_SWAP_ONLY_IN_TESTS.id}）`,
+    ({ And }) => {
+      const { violating, allowed } = APP_DATABASE_SWAP_EXAMPLES;
+      // WHY 遅延して 1 回だけ判定する: 例ごとに tsgo を起動すると遅いため（ProblemResponse.from の判定と同じ）。
+      let verdicts: { violating: boolean[]; allowed: boolean[] } | undefined;
+      const verdictsOf = () => {
+        verdicts ??= {
+          violating: judgeSourceExamples(
+            violating,
+            APP_DATABASE_SWAP_ONLY_IN_TESTS.appliesTo,
+            findAppDatabaseSwaps,
+          ),
+          allowed: judgeSourceExamples(
+            allowed,
+            APP_DATABASE_SWAP_ONLY_IN_TESTS.appliesTo,
+            findAppDatabaseSwaps,
+          ),
+        };
+        return verdicts;
+      };
+      And(
+        "違反例（APP_DATABASE_SWAP_EXAMPLES.violating）はすべて違反になる",
+        () => {
+          // given
+          const cases = violating.map(([file], i): [string, number] => [
+            `違反例 ${i}（${file}）`,
+            i,
+          ]);
+
+          // when
+          const result = casesByName(
+            cases,
+            ([, i]) => verdictsOf().violating[i],
+          );
+
+          // then
+          expect(result).toEqual(casesByName(cases, () => true));
+        },
+      );
+      And(
+        "許可例（APP_DATABASE_SWAP_EXAMPLES.allowed）はどれも違反にならない",
         () => {
           // given
           const cases = allowed.map(([file], i): [string, number] => [

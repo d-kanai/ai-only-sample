@@ -45,6 +45,8 @@ Feature: ディレクトリ構成ルール（依存の向き）
     * apps/backend の presentation と shared/http の api ファイル（<名前>.api.ts）のクラスの handle の中に try / catch を書かない（エラーの変換は ProblemResponse.wrap に任せる。try / finally は可。テストは除く）
     * ProblemResponse.from を書いてよいのは apps/backend/shared/http/problem.ts だけ（api は ProblemResponse.wrap 経由で使う。apps/backend の本番コードが対象で、テストは除く）
     * ProblemResponse.from の規則は、本物の api ファイル 8 本を対象にし、problem.ts とテストは対象にしない（列挙が壊れて素通りするのを防ぐ）
+    * AppDatabase.use と AppDatabase.release を書いてよいのはテストとテストの補助（apps/<アプリ>/test-support/）だけ（apps/backend・apps/frontend_customer・apps/shared の本番コードが対象。本番コードが release を呼ぶとプールを閉じずに手放し、接続が漏れる）
+    * AppDatabase.use と release の規則は、本物の api ファイル 8 本と database.ts を対象にし、test-support/ とテストは対象にしない（列挙が壊れて素通りするのを防ぐ）
     * apps/backend と apps/shared の本番コードとテストの補助（apps/backend の test-support/・spec/ の support.ts、apps/e2e の <名前>.spec.<名前> 以外）と apps/frontend_customer の features/・shared/・test-support/ の React 以外のモジュール（<名前>.tsx・<名前>.jsx・<名前>.hook.<名前> 以外）はファイルの最上位に関数を置かない（テストと E2E の <名前>.spec.<名前>、frontend の app/ と直下のファイルは除く。function 宣言・関数を入れた変数・export default の関数は違反。クラスのメソッド・クラスフィールドのアロー関数・メソッドの中の関数は可）
     * 規則 class-based の対象のファイルでは、インスタンスのメンバー（コンストラクタ・static でないメソッド・フィールド・アクセサ）を持つクラスに static のメンバーを置かない（自分のクラスか Promise<自分のクラス> を返す static のファクトリは可。static だけのクラスは対象外）
     * apps/backend/features/<f>/internal/domain/ のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）は、型注釈に string・number・bigint を含まない（string[]・string | undefined などの合成も違反。値は VO のクラスにする。VO が中身を持つ名前 value のフィールドは可。boolean・Date・ほかのクラスや型の参照は可。テストは除く）
@@ -121,6 +123,9 @@ Feature: ディレクトリ構成ルール（依存の向き）
   Scenario: ProblemResponse.from を problem.ts だけに書く規則の判定（problem-response-from-only-in-problem）
     * 違反例（PROBLEM_RESPONSE_FROM_EXAMPLES.violating）はすべて違反になる
     * 許可例（PROBLEM_RESPONSE_FROM_EXAMPLES.allowed）はどれも違反にならない
+  Scenario: AppDatabase.use と release をテストとテストの補助だけに書く規則の判定（app-database-swap-only-in-tests）
+    * 違反例（APP_DATABASE_SWAP_EXAMPLES.violating）はすべて違反になる
+    * 許可例（APP_DATABASE_SWAP_EXAMPLES.allowed）はどれも違反にならない
   Scenario: backend と apps/shared の本番コードとテストの補助、frontend の React 以外のモジュールの最上位に関数を置かない規則の判定（class-based）
     * 違反例（CLASS_BASED_EXAMPLES.violating）はすべて違反になる
     * 許可例（CLASS_BASED_EXAMPLES.allowed）はどれも違反にならない

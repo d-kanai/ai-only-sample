@@ -9,9 +9,9 @@ paths:
 
 | カテゴリ | WHAT | WHY | 強制 |
 | --- | --- | --- | --- |
-| 検査 | `rule-tests/architecture.test.ts`（`pnpm test` に含まれ、CI の `ci` ジョブで止まる）が、次のものを 1 規則 = 1 テストで検査する: ディレクトリ構成の規則（`.claude/rules/code/backend.md`・`.claude/rules/code/frontend.md`・`.claude/rules/code/shared.md`）と環境変数の直参照の禁止（`.claude/rules/tooling/env.md`）、`console` の直接の呼び出しの禁止（`.claude/rules/code/backend.md` の「ログ」）、現在時刻を `apps/shared/now.ts` の外で読むことの禁止（`.claude/rules/code/shared.md` の「現在時刻」）、画面と、サーバ側（backend・shared）のハードコードの文言の禁止（Issue #116 の i18n）、画面・部品の辞書の置き場所（Issue #125）、api の `handle` を `ProblemResponse.wrap` で包むこと（Issue #141）、`handle` の中に catch を書かないこと・`ProblemResponse.from` を `shared/http/problem.ts` の外で使わないこと（`handle-without-try-catch`・`problem-response-from-only-in-problem`。Issue #332）、backend の本番コードの最上位に関数を置かないこと（Issue #262）、インスタンスで使うクラスに static を置かないこと（Issue #300）、domain のクラスのフィールドに string / number / bigint を置かないこと（値オブジェクトにする。Issue #423）、backend のモジュールの境界（`expose/` / `internal/`。Issue #208）、frontend のライブラリの使い方（zod の入口・zustand の置き場所・手の memo の禁止。Issue #452） | - | 説明 |
+| 検査 | `rule-tests/architecture.test.ts`（`pnpm test` に含まれ、CI の `ci` ジョブで止まる）が、次のものを 1 規則 = 1 テストで検査する: ディレクトリ構成の規則（`.claude/rules/code/backend.md`・`.claude/rules/code/frontend.md`・`.claude/rules/code/shared.md`）と環境変数の直参照の禁止（`.claude/rules/tooling/env.md`）、`console` の直接の呼び出しの禁止（`.claude/rules/code/backend.md` の「ログ」）、現在時刻を `apps/shared/now.ts` の外で読むことの禁止（`.claude/rules/code/shared.md` の「現在時刻」）、画面と、サーバ側（backend・shared）のハードコードの文言の禁止（Issue #116 の i18n）、画面・部品の辞書の置き場所（Issue #125）、api の `handle` を `ProblemResponse.wrap` で包むこと（Issue #141）、`handle` の中に catch を書かないこと・`ProblemResponse.from` を `shared/http/problem.ts` の外で使わないこと（`handle-without-try-catch`・`problem-response-from-only-in-problem`。Issue #332）、backend の本番コードの最上位に関数を置かないこと（Issue #262）、インスタンスで使うクラスに static を置かないこと（Issue #300）、domain のクラスのフィールドに string / number / bigint を置かないこと（値オブジェクトにする。Issue #423）、backend のモジュールの境界（`expose/` / `internal/`。Issue #208）、frontend のライブラリの使い方（zod の入口・zustand の置き場所・手の memo の禁止。Issue #452）、テスト専用の差し替え口 `AppDatabase.use` / `release` を本番コードで書かないこと（Issue #456） | - | 説明 |
 | 検査 | ルール検査テストなので、must pass / must reject と fault injection が必須（`.claude/rules/quality/testing.md`、手順はスキル `rule-check-test`） | 違反を見逃すと存在する意味が無い | レビュー |
-| 構成 | 規則は全部で 43 = 依存の 26 `RULES` + 置き場所 3 + 環境変数 1 + console 1 + 現在時刻 1 + exports 2 + ハードコードの文言 2 + `handle` の包み方 1 + `handle` の中の try / catch 1 + `ProblemResponse.from` の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1 + domain の値の VO 1 + 手の memo 1。規則の種類ごとに、下の「import と exports」から「frontend のライブラリ」までの表に分けて書く | - | 説明 |
+| 構成 | 規則は全部で 44 = 依存の 26 `RULES` + 置き場所 3 + 環境変数 1 + console 1 + 現在時刻 1 + exports 2 + ハードコードの文言 2 + `handle` の包み方 1 + `handle` の中の try / catch 1 + `ProblemResponse.from` の置き場所 1 + `AppDatabase.use` / `release` の置き場所 1 + 最上位の関数 1 + インスタンスのクラスの static 1 + domain の値の VO 1 + 手の memo 1。規則の種類ごとに、下の「import と exports」から「テスト専用の口」までの表に分けて書く | - | 説明 |
 | 構成 | 下の「限界」には、見逃す方向と多く検出する方向の両方を書く | - | 説明 |
 
 ## 対象と抽出
@@ -147,6 +147,14 @@ paths:
 | memo | `frontend-no-manual-memo` が通すもの: ほかの react の hook と型（`useState`・`React.useState`・`MemoExoticComponent`）、`"react"` 以外からの同じ名前（自前の `./cache`・`react-dom`）、react の名前空間でない値の `.memo`（`cache.memo`）とローカルの `memo` という関数、コメントと文字列の中、テスト | 判定の例 `MANUAL_MEMO_EXAMPLES` と fixture で固定する | `rule-tests/architecture.test.ts` の `MANUAL_MEMO_EXAMPLES` |
 | memo | `frontend-no-manual-memo` の限界: 分割代入（`const { useMemo } = React`）、dynamic `import()`・`require`、自前のファイルが re-export したものを使う形（中継の re-export そのものは拾う）、`export * from "react"`・`export * as R from "react"`、括弧で包んだ参照（`(React).useMemo`）、テンプレートリテラルの要素アクセス（`` React[`useCallback`] ``）は拾わない。`React` という名前の別の値の `.memo` も違反にする | 限界（見逃す方向と多く検出する方向） | レビュー |
 
+## テスト専用の口
+
+| カテゴリ | WHAT | WHY | 強制 |
+| --- | --- | --- | --- |
+| AppDatabase | `app-database-swap-only-in-tests`（`APP_DATABASE_SWAP_ONLY_IN_TESTS`。Issue #456）: `apps/backend`・`apps/frontend_customer`・`apps/shared` のテスト以外のソースで、テストの補助（アプリの直下の `test-support/` の下）の外のファイルに `AppDatabase.use` / `AppDatabase.release`（呼び出し・呼ばない参照・`["use"]`・名前空間の経由）があれば違反（「ファイル:行」）。定義の `database.ts` と `apps/backend/spec/` の `support.ts` も対象 | `use` / `release` は画面仕様が本番の handler の接続をテスト用のスキーマにするための差し替え口（`TestDatabase.installAsAppDatabase`）で、本番クラスの public static にある。本番コードが `release` を呼ぶとプールを閉じずに手放し（次の `AppDatabase.get` が新しいプールを作る）、接続が漏れる | `rule-tests/architecture.test.ts` の `app-database-swap-only-in-tests` |
+| AppDatabase | `app-database-swap-only-in-tests` が通すもの: `AppDatabase` のほかのメソッド（`get`・`close`）、ほかのクラスの `use` / `release`、名前の前方一致（`useX`・`released`・`MyAppDatabase`）、コメントと文字列の中、テストとテストの補助、`apps/e2e`・`scripts/`。判定の例は `APP_DATABASE_SWAP_EXAMPLES` | - | `rule-tests/architecture.test.ts` の `app-database-swap-only-in-tests`・`APP_DATABASE_SWAP_EXAMPLES` |
+| AppDatabase | `app-database-swap-only-in-tests` の限界: 別名の import（`D.use`）、分割代入、変数に入れ直したクラス、かっこや非 null 表明で包んだ受け手、型の位置、`apps/e2e`・`scripts/`・リポジトリ直下。名前だけで見るので、同じ名前の別のクラスの `use` / `release` も違反になる（多く検出する方向） | 限界（見逃す・多く検出する） | レビュー |
+
 ## テストの持ち方
 
 | カテゴリ | WHAT | WHY | 強制 |
@@ -166,6 +174,7 @@ paths:
 | 同じ変更 | backend/shared の単位を足す・変えるとき（Issue #310）は、`BACKEND_SHARED_UNITS`（置き場所と参照の両方がこの一覧を使う）・`PLACEMENT_EXAMPLES`・層の規則の `RULE_EXAMPLES`・fixture と、この文書・`.claude/rules/code/backend.md` を同じ変更で直す | - | レビュー |
 | 同じ変更 | `presentation-with-problem-response` を変えるとき（判定 `findUnwrappedHandles`、対象の列挙 `listProblemResponseCheckedFiles`）は、判定例 `PROBLEM_RESPONSE_EXAMPLES`・列挙のテスト・fixture を同じ変更で直す | - | レビュー |
 | 同じ変更 | `handle-without-try-catch`（判定 `findHandleTryCatches`）と `problem-response-from-only-in-problem`（判定 `findProblemResponseFroms`）を変えるときは、判定例 `HANDLE_TRY_CATCH_EXAMPLES`・`PROBLEM_RESPONSE_FROM_EXAMPLES` と fixture を同じ変更で直す | - | レビュー |
+| 同じ変更 | `app-database-swap-only-in-tests` を変えるとき（判定 `findAppDatabaseSwaps`、対象 `APP_DATABASE_SWAP_ONLY_IN_TESTS.appliesTo` と列挙 `listAppDatabaseSwapCheckedFiles`）は、判定例 `APP_DATABASE_SWAP_EXAMPLES`・列挙のテスト・fixture を同じ変更で直す | - | レビュー |
 | 同じ変更 | `frontend-no-manual-memo` を変えるとき（判定 `findManualMemos`、対象 `FRONTEND_NO_MANUAL_MEMO.appliesTo` と列挙 `listManualMemoCheckedFiles`）は、判定例 `MANUAL_MEMO_EXAMPLES`・列挙のテスト・fixture を同じ変更で直す | 判定の例と fixture が規則とずれると、見逃しも誤検知もテストで分からない | レビュー |
 | 同じ変更 | `class-based` を変えるとき（判定 `findTopLevelFunctions`、対象 `CLASS_BASED.appliesTo` と列挙 `listClassBasedCheckedFiles`）は、判定例 `CLASS_BASED_EXAMPLES`・「最上位の関数の抽出」のテスト・列挙のテスト・fixture を同じ変更で直す | - | レビュー |
 | 同じ変更 | ハードコードの文言の規則を変えるとき（属性の一覧 `VISIBLE_TEXT_ATTRIBUTES`、辞書の例外 `I18N_MESSAGES`（`*.messages.ts`）と `defineMessages` の引数の判定（`isDefineMessagesCall`）、日本語の判定 `JAPANESE`）は、`HARDCODED_TEXT_EXAMPLES`・「ハードコードの文言の抽出」のテスト・fixture を同じ変更で直す | - | レビュー |

@@ -11,10 +11,10 @@ Feature: 画面仕様の置き場所と書き方
     * 一覧に無い見出し・同じ見出しの 2 つ目・順の違う見出し・足りない見出しは、見出しの違反になる
     * 使わないキーワード・タグ・箇条書きでない step・step の無い Scenario・技術の言葉は、その行の違反になる
   Scenario: step の実装の中身（findStepContentViolations）: must pass
-    * 実 DB の準備と fetch の差し替えを値で import し、対の .feature を読み、遷移だけをモックする step の実装は違反なし（複数行の import・拡張子付き・モック無し・ほかの test-support）
+    * 実 DB の準備と fetch の差し替えを値で import して呼び出し、対の .feature を読み、遷移だけをモックする step の実装は違反なし（複数行の import と呼び出し・拡張子付き・モック無し・ほかの test-support）
   Scenario: step の実装の中身（findStepContentViolations）: must reject
     * 遷移でないモック・feature の api と InMemory の import・skip と対でない読み込みは、その行の違反になる（vi.doMock・api の import type と dynamic import()・相対パスの api・別名の loadFeature など）
-    * 実 DB の準備・fetch の差し替え・対の .feature の読み込みが無ければ、ファイルの違反になる（型だけの import・名前の一部だけが同じ別のモジュール）
+    * 実 DB の準備・fetch の差し替え・対の .feature の読み込みが無ければ、ファイルの違反になる（型だけの import・名前の一部だけが同じ別のモジュール・import しても installAsAppDatabase と RouteFetch.install を呼ばない）
   Scenario: 画面仕様の列挙と検査（fixture）
     * apps/frontend_customer の下の .feature・step の実装・画面を対象にし（依存・ビルドの出力は除く）、違反を「規則: パス(:行)（理由）」で返す
     * apps/frontend_customer が無ければ対象は 0 件（本番の検査は 0 件を失敗にする）

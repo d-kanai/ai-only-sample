@@ -28,30 +28,48 @@ type RouteLoader = (file: string) => Promise<RouteModule>;
 // route.ts 1 つ。pattern は URL のパスの全体に一致する正規表現で、動的セグメントの値を順に名前（names）の位置で取り出す。
 type Route = { file: string; pattern: RegExp; names: readonly string[] };
 
+// 動的セグメント（[id]）の区間 1 つ。
+const DYNAMIC_SEGMENT = /^\[[^\]]+\]$/;
+
 // app/api の route.ts の一覧と、URL のパスから route.ts を探す処理。
 export class RouteTable {
   private constructor(private readonly routes: readonly Route[]) {}
 
   // apiDir（app/api のディレクトリ）の下の route.ts をすべて読み、URL の形を決める。
   // WHY 既定値を test-support からの相対で決める: 呼ぶ側（画面仕様）が app/ の場所を知らずに済む。テストは別のディレクトリを渡す。
+  // WHY 照合の順を、区間の位置ごとに固定の区間を動的の区間（[name]）より前にする: Next の App Router は固定の区間を優先して
+  //   振り分ける（todos/stats は todos/[id] より先）。名前順だと '[' が小文字より前に並び、todos/stats が todos/[id] に吸われて
+  //   本番と違う handler を呼ぶ。最初に違う区間で比べ、そこが同じ種類なら名前順（決まった順にするため）。
+  //   並びの鍵は、区間ごとに固定なら "0"・動的なら "1" を前に付け、区間の間を "\0"（どの文字より小さい）でつないだ文字列
+  //   （区切りを "/" にすると、todos と todos-x のように前方一致する名前で、区切りと名前の続きの文字の大小が混ざる）。
   // 限界: 動的セグメントは [name] の 1 つの区間だけを読む。[...name]（catch-all）・[[...name]]・ルートグループ (group) は今は無く、
-  //   置かれたら名前のとおりの区間として扱う（一致しない）ので、画面仕様の fetch がエラーになって気づける。
+  //   置かれたら名前のとおりの区間として扱う（固定の区間として名前で比べ、一致しない）ので、画面仕様の fetch がエラーになって気づける。
+  //   それらを置くときは、照合（pattern）と並び（catch-all を動的の区間より後にする Next の優先順）の両方を足す。
   static read(
     apiDir: string = join(import.meta.dirname, "..", "app", "api"),
   ): RouteTable {
     const files = readdirSync(apiDir, { recursive: true, encoding: "utf8" })
       .filter((path) => path === "route.ts" || path.endsWith(`${sep}route.ts`))
-      .sort();
+      .map((path) => ({
+        path,
+        key: path
+          .split(sep)
+          .map(
+            (segment) => `${DYNAMIC_SEGMENT.test(segment) ? 1 : 0}${segment}`,
+          )
+          .join("\0"),
+      }))
+      .sort((a, b) => (a.key < b.key ? -1 : 1))
+      .map(({ path }) => path);
     return new RouteTable(
       files.map((path) => {
         const segments = path.split(sep).slice(0, -1);
-        const names = segments.flatMap((segment) => {
-          const dynamic = /^\[([^\]]+)\]$/.exec(segment);
-          return dynamic === null ? [] : [dynamic[1] as string];
-        });
+        const names = segments.flatMap((segment) =>
+          DYNAMIC_SEGMENT.test(segment) ? [segment.slice(1, -1)] : [],
+        );
         const source = segments
           .map((segment) =>
-            /^\[[^\]]+\]$/.test(segment)
+            DYNAMIC_SEGMENT.test(segment)
               ? "/([^/]+)"
               : `/${segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
           )

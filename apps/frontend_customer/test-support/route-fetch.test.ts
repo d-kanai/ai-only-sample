@@ -112,6 +112,40 @@ describe("RouteTable", () => {
       undefined,
     ]);
   });
+  test("固定の区間（todos/stats）は、同じ位置の動的の区間（todos/[id]）より先に照合する（Next の App Router と同じ振り分け）", () => {
+    // given
+    // WHY 名前順で [id] が stats より前に来る一覧にする: '[' は小文字より文字コードが小さく、名前順に照合すると stats が [id] に吸われる。
+    //   区間の位置ごとに固定を優先し、その次の区間でも同じ規則で比べる（a/[x]/c と a/[x]/[y] の 2 段目も確かめる）。
+    const dir = apiDir({
+      "todos/[id]/route.ts": "",
+      "todos/stats/route.ts": "",
+      "todos/[id]/[field]/route.ts": "",
+      "todos/[id]/title/route.ts": "",
+    });
+    const table = RouteTable.read(dir);
+
+    // when
+    const result = {
+      stats: table.match("/api/todos/stats"),
+      detail: table.match("/api/todos/1"),
+      title: table.match("/api/todos/1/title"),
+      field: table.match("/api/todos/1/done"),
+    };
+
+    // then
+    expect(result).toEqual({
+      stats: { file: join(dir, "todos/stats/route.ts"), params: {} },
+      detail: { file: join(dir, "todos/[id]/route.ts"), params: { id: "1" } },
+      title: {
+        file: join(dir, "todos/[id]/title/route.ts"),
+        params: { id: "1" },
+      },
+      field: {
+        file: join(dir, "todos/[id]/[field]/route.ts"),
+        params: { id: "1", field: "done" },
+      },
+    });
+  });
 });
 
 describe("RouteFetch", () => {

@@ -96,7 +96,8 @@ export class AppDatabase {
     return holder.__appDatabase;
   }
 
-  // 渡した接続を、プロセスで 1 つの接続にする（以後の AppDatabase.get が返す）。テストだけが使う差し替え口。
+  // 渡した接続を、プロセスで 1 つの接続にする（以後の AppDatabase.get が返す）。テストだけが使う差し替え口（use / release を
+  //   本番コードから呼ぶことは rule-tests/architecture.test.ts の app-database-swap-only-in-tests が止める。Issue #456）。
   // WHY 要る: api ファイルはモジュールを読み込んだときに AppDatabase.get().db で本番の handler を組み立てる。画面仕様
   //   （.claude/rules/quality/testing.md の「画面仕様」）は route.ts を通して本番の handler を呼ぶので、読み込む前にテスト用の
   //   スキーマの接続（apps/backend/test-support/database.ts の TestDatabase.installAsAppDatabase）を渡しておく。

@@ -63,6 +63,13 @@ import { containsForbiddenWord } from "./feature-business-language";
 //     替える）を値で import する。
 //     WHY 2 つを求める: 実 DB の準備とネットワークの差し替えの 2 つが、モック無しで画面から保存先までをつなぐ仕組み（daiki の要望
 //       「backend と Postgres もつなぐ」「差し替えは fetch の基盤の 1 か所で」）。型だけの import では何も用意しない。
+//     import に加えて、installAsAppDatabase()（TestDatabase のインスタンスのメソッド）と RouteFetch.install() の呼び出しも求める
+//     （import があって呼び出しが無ければ「〜を呼んでいない」の違反。Issue #456）。
+//     WHY 呼び出しも求める: import だけで installAsAppDatabase を呼び忘れると、step は失敗するものの、その前に本番の handler が
+//       env の設定の接続（開発用 DB の public の表）に書き込む。RouteFetch.install を呼び忘れると fetch がネットワークに出る。
+//     限界: 呼び出しの順（installAsAppDatabase を RouteFetch の最初のリクエストより前に呼ぶ）と、beforeAll の中かは見ない。
+//       installAsAppDatabase は受け手を問わない（TestDatabase のインスタンスかは見ない）。RouteFetch を別名で import すると
+//       呼び出しを拾わない（違反になる方向）。
 //   - screen-spec-load-feature: `loadFeature("./<name>.feature")`（対の .feature を第 2 引数なしで読む）が 1 つ以上要る（無ければファイルの
 //     違反）。対でない・第 2 引数のある呼び出し、`loadFeature as` の別名、setVitestCucumberConfiguration・loadFeatureFromText・
 //     defineFeature はその行の違反（API 仕様と同じ。言語の切り替えで見出しの検査を逃れさせない）。
@@ -131,6 +138,10 @@ const SCREEN_FILE = new RegExp(
 
 const TEST_DATABASE_MODULE = "apps/backend/test-support/database";
 const ROUTE_FETCH_MODULE = `${FRONTEND_DIR}/test-support/route-fetch`;
+// TestDatabase のインスタンスの installAsAppDatabase の呼び出し（受け手の名前は問わない。改行・空白を挟んでもよい）。
+const INSTALL_AS_APP_DATABASE_CALL = /\.\s*installAsAppDatabase\s*\(/;
+// RouteFetch.install の呼び出し（受け手は import した名前 RouteFetch）。
+const ROUTE_FETCH_INSTALL_CALL = /\bRouteFetch\s*\.\s*install\s*\(/;
 // feature の api/ の <x>-api（拡張子なしのリポジトリ相対）。
 const FEATURE_API_MODULE = new RegExp(
   `^${FRONTEND_DIR}/features/[^/]+/api/[^/]+-api$`,
@@ -483,23 +494,33 @@ function findStepContentViolations(
   ]);
   const importsValue = (module: string) =>
     imports.some((ref) => ref.kind === "value" && ref.module === module);
+  // WHY 文字列を空白にしてから探す: コメントは stripComments で消してあり、文字列の中の呼び出しは呼び出しではない。
+  const calls = (pattern: RegExp) => pattern.test(blankStrings(code));
+  // import が無ければ import の違反だけを出し（呼び出しの違反は重ねない）、import があって呼び出しが無ければ呼び出しの違反を出す。
+  const requirement = (
+    rule: "screen-spec-uses-real-database" | "screen-spec-uses-route-fetch",
+    module: string,
+    call: RegExp,
+    callName: string,
+  ): ScreenSpecViolation[] => {
+    if (!importsValue(module)) {
+      return [{ rule, note: `${module} を値で import していない` }];
+    }
+    return calls(call) ? [] : [{ rule, note: `${callName} を呼んでいない` }];
+  };
   const required: ScreenSpecViolation[] = [
-    ...(importsValue(TEST_DATABASE_MODULE)
-      ? []
-      : [
-          {
-            rule: "screen-spec-uses-real-database" as const,
-            note: `${TEST_DATABASE_MODULE} を値で import していない`,
-          },
-        ]),
-    ...(importsValue(ROUTE_FETCH_MODULE)
-      ? []
-      : [
-          {
-            rule: "screen-spec-uses-route-fetch" as const,
-            note: `${ROUTE_FETCH_MODULE} を値で import していない`,
-          },
-        ]),
+    ...requirement(
+      "screen-spec-uses-real-database",
+      TEST_DATABASE_MODULE,
+      INSTALL_AS_APP_DATABASE_CALL,
+      "installAsAppDatabase()",
+    ),
+    ...requirement(
+      "screen-spec-uses-route-fetch",
+      ROUTE_FETCH_MODULE,
+      ROUTE_FETCH_INSTALL_CALL,
+      "RouteFetch.install()",
+    ),
   ];
   const name = posix.basename(path).replace(STEP_FILE, "");
   return [
@@ -605,6 +626,7 @@ const GOOD_STEPS = [
   'import { RouteFetch } from "@/test-support/route-fetch";',
   'vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));',
   'const feature = await loadFeature("./x-screen.feature");',
+  "beforeAll(async () => { database = await TestDatabase.create(); database.installAsAppDatabase(); routeFetch = RouteFetch.install(); });",
   "describeFeature(feature, () => {});",
 ];
 
@@ -931,7 +953,7 @@ describeFeature(feature, ({ Scenario }) => {
     "step の実装の中身（findStepContentViolations）: must pass",
     ({ And }) => {
       And(
-        "実 DB の準備と fetch の差し替えを値で import し、対の .feature を読み、遷移だけをモックする step の実装は違反なし（複数行の import・拡張子付き・モック無し・ほかの test-support）",
+        "実 DB の準備と fetch の差し替えを値で import して呼び出し、対の .feature を読み、遷移だけをモックする step の実装は違反なし（複数行の import と呼び出し・拡張子付き・モック無し・ほかの test-support）",
         () => {
           // given
           const cases: [string, string[]][] = [
@@ -952,6 +974,13 @@ describeFeature(feature, ({ Scenario }) => {
                 'import { ScreenSpecProviders } from "@/test-support/screen-spec";',
                 'import type { Todo } from "@/features/todo/api/todo-queries";',
                 "const feature = await loadFeature('./x-screen.feature');",
+                "beforeAll(async () => {",
+                "  database = await TestDatabase.create();",
+                "  database",
+                "    .installAsAppDatabase ( );",
+                "  routeFetch = RouteFetch",
+                "    .install(table, loader);",
+                "});",
               ],
             ],
             [
@@ -983,7 +1012,7 @@ describeFeature(feature, ({ Scenario }) => {
       And(
         "遷移でないモック・feature の api と InMemory の import・skip と対でない読み込みは、その行の違反になる（vi.doMock・api の import type と dynamic import()・相対パスの api・別名の loadFeature など）",
         () => {
-          // given: GOOD_STEPS（7 行）の後に 8 行目として足す
+          // given: GOOD_STEPS（8 行）の後に 9 行目として足す
           const cases: [string, string, ScreenSpecRuleId][] = [
             [
               "api の vi.mock",
@@ -1084,13 +1113,13 @@ describeFeature(feature, ({ Scenario }) => {
 
           // then
           expect(result).toEqual(
-            casesByName(cases, ([, , rule]) => [{ rule, line: 8 }]),
+            casesByName(cases, ([, , rule]) => [{ rule, line: 9 }]),
           );
         },
       );
 
       And(
-        "実 DB の準備・fetch の差し替え・対の .feature の読み込みが無ければ、ファイルの違反になる（型だけの import・名前の一部だけが同じ別のモジュール）",
+        "実 DB の準備・fetch の差し替え・対の .feature の読み込みが無ければ、ファイルの違反になる（型だけの import・名前の一部だけが同じ別のモジュール・import しても installAsAppDatabase と RouteFetch.install を呼ばない）",
         () => {
           // given
           const database = {
@@ -1105,6 +1134,20 @@ describeFeature(feature, ({ Scenario }) => {
             rule: "screen-spec-load-feature" as const,
             note: "./x-screen.feature を読んでいない",
           };
+          const notInstalled = {
+            rule: "screen-spec-uses-real-database" as const,
+            note: "installAsAppDatabase() を呼んでいない",
+          };
+          const notRouted = {
+            rule: "screen-spec-uses-route-fetch" as const,
+            note: "RouteFetch.install() を呼んでいない",
+          };
+          // 2 つを値で import し、対の .feature を読む（呼び出しの有無だけを変える例の共通の行）。
+          const importsAndLoad = [
+            'import { TestDatabase } from "../../../../../backend/test-support/database";',
+            'import { RouteFetch } from "@/test-support/route-fetch";',
+            'const feature = await loadFeature("./x-screen.feature");',
+          ];
           const cases: [string, string[], ScreenSpecViolation[]][] = [
             ["何も import しない", [], [load, database, routeFetch]],
             [
@@ -1124,6 +1167,46 @@ describeFeature(feature, ({ Scenario }) => {
                 'const feature = await loadFeature("./x-screen.feature");',
               ],
               [database, routeFetch],
+            ],
+            // WHY 呼び出しも求める: import だけで installAsAppDatabase を呼び忘れると、step は失敗するものの、その前に本番の
+            //   handler が env の設定の接続（開発用 DB の public の表）に書き込む（Issue #456 の reviewer 指摘）。
+            [
+              "import して作るだけで、どちらも呼ばない",
+              [
+                ...importsAndLoad,
+                "beforeAll(async () => { database = await TestDatabase.create(); });",
+              ],
+              [notInstalled, notRouted],
+            ],
+            [
+              "installAsAppDatabase だけ呼ぶ",
+              [...importsAndLoad, "database.installAsAppDatabase();"],
+              [notRouted],
+            ],
+            [
+              "RouteFetch.install だけ呼ぶ",
+              [...importsAndLoad, "routeFetch = RouteFetch.install();"],
+              [notInstalled],
+            ],
+            [
+              "コメントと文字列の中だけで呼ぶ",
+              [
+                ...importsAndLoad,
+                "// database.installAsAppDatabase(); RouteFetch.install();",
+                "/* database.installAsAppDatabase(); */",
+                'const text = "database.installAsAppDatabase(); RouteFetch.install();";',
+              ],
+              [notInstalled, notRouted],
+            ],
+            [
+              "呼ばずに参照する・名前の一部だけが同じ別のメソッド・別のクラスの install",
+              [
+                ...importsAndLoad,
+                "const a = database.installAsAppDatabase;",
+                "database.installAsAppDatabaseX();",
+                "RouteFetch.installX(); OtherFetch.install(); RouteFetch.install;",
+              ],
+              [notInstalled, notRouted],
             ],
           ];
 
@@ -1150,7 +1233,8 @@ describeFeature(feature, ({ Scenario }) => {
           [SCREEN]: "",
           [FEATURE]: source(...GOOD_FEATURE),
           [STEPS]: source(...GOOD_STEPS),
-          // 中身の違反（禁止語・api のモック）と、対の欠け（.feature と step の無い画面）。
+          // 中身の違反（禁止語・api のモック・import だけで installAsAppDatabase と RouteFetch.install を呼ばない）と、対の欠け
+          //   （.feature と step の無い画面）。
           [`${SCREENS}/y-screen/y-screen.tsx`]: "",
           [`${SCREENS}/z-screen/z-screen.tsx`]: "",
           [`${SCREENS}/z-screen/z-screen.feature`]: source(
@@ -1158,8 +1242,8 @@ describeFeature(feature, ({ Scenario }) => {
             "    * DB に残る",
           ),
           [`${SCREENS}/z-screen/z-screen.screen-spec.test.tsx`]: source(
-            ...GOOD_STEPS.map((line) =>
-              line.replaceAll("x-screen", "z-screen"),
+            ...GOOD_STEPS.filter((line) => !line.startsWith("beforeAll(")).map(
+              (line) => line.replaceAll("x-screen", "z-screen"),
             ),
             'vi.mock("@/features/todo/api/todo-api");',
           ),
@@ -1195,6 +1279,8 @@ describeFeature(feature, ({ Scenario }) => {
             `screen-spec-pair: ${SCREENS}/y-screen/y-screen.tsx（y-screen.screen-spec.test.tsx が無い）`,
             `screen-spec-business-language: ${SCREENS}/z-screen/z-screen.feature:10`,
             `screen-spec-mock-only-navigation: ${SCREENS}/z-screen/z-screen.screen-spec.test.tsx:8`,
+            `screen-spec-uses-real-database: ${SCREENS}/z-screen/z-screen.screen-spec.test.tsx（installAsAppDatabase() を呼んでいない）`,
+            `screen-spec-uses-route-fetch: ${SCREENS}/z-screen/z-screen.screen-spec.test.tsx（RouteFetch.install() を呼んでいない）`,
             "screen-spec-placement: apps/frontend_customer/x.feature",
           ],
         });

@@ -158,7 +158,7 @@ Entity の業務ルール（不変条件・用語・規則の理由）を `<name
 - step の実装:
   - `beforeAll` で `TestDatabase.create()`・`migrate()`・`installAsAppDatabase()`、`RouteFetch.install()`（route.ts は最初のリクエストで読み込まれるので、`installAsAppDatabase()` を先に呼ぶ）。`afterAll` で `restore()` と `close()`。各テストの前に画面を片付け、表を `TRUNCATE`。前提の行はテストデータビルダーで入れる。
   - 書き込みの操作の後は、画面の変化と保存された行（`database.pool.query` など）の両方を確かめる。WHY: 画面が正しくても保存がずれる誤りを見逃さない。
-  - モックは `next/navigation` だけ。遷移はリンクの `href` で確かめる（`next/link` のクリックは `next/navigation` を通らない）。feature の `api/` の `<x>-api` と `*.in-memory` は import しない（`screen-spec-no-feature-api` / `screen-spec-no-in-memory`）。`test-support/database` と `test-support/route-fetch` を値で import する（`screen-spec-uses-real-database` / `screen-spec-uses-route-fetch`）。
+  - モックは `next/navigation` だけ。遷移はリンクの `href` で確かめる（`next/link` のクリックは `next/navigation` を通らない）。feature の `api/` の `<x>-api` と `*.in-memory` は import しない（`screen-spec-no-feature-api` / `screen-spec-no-in-memory`）。`test-support/database` と `test-support/route-fetch` を値で import し、`.installAsAppDatabase(` と `RouteFetch.install(` を呼ぶ（呼び忘れると開発用 DB の `public` の表に書き込むため。`screen-spec-uses-real-database` / `screen-spec-uses-route-fetch`）。
   - `loadFeature("./<name>.feature")`（第 2 引数なし）で読み、skip・タグの絞り込みを使わない（`screen-spec-load-feature` / `screen-spec-no-skip`）。
   - backend の `test-support/database` とテストデータビルダーは相対パス（`../../../../../backend/test-support/...`）で import する（`exports` に test-support を載せない。Biome の例外は `.claude/rules/quality/lint.md`）。
 - `pnpm test` の実行に含まれる。
