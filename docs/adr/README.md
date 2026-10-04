@@ -132,6 +132,7 @@ ADR は分類ごとのディレクトリに置く。分類は次の 4 つだけ�
 | 2026-10-03 | 動いているアプリのセキュリティの検査は、E2E を ZAP のプロキシ経由で流し、受け身の検査の警告で CI を落とす | 置き換え（→ quality/20261003-zap-daily-active-scan.md） | [20261003-zap-passive-scan-via-e2e.md](quality/20261003-zap-passive-scan-via-e2e.md) |
 | 2026-10-03 | ZAP の検査は PR の CI から外し、main の日次で E2E を通した受け身の検査と active scan を流す | 採用 | [20261003-zap-daily-active-scan.md](quality/20261003-zap-daily-active-scan.md) |
 | 2026-10-03 | CSP は単体テストで CSP Evaluator に評価させ、すべての応答に CORP と COEP を足す | 採用 | [20261003-csp-evaluator-and-cross-origin-isolation.md](quality/20261003-csp-evaluator-and-cross-origin-isolation.md) |
+| 2026-10-04 | 画面ごとに画面仕様の .feature を置き、step は fetch だけを Route Handler の呼び出しに替えて実 Postgres まで通す | 採用 | [20261004-screen-spec-with-real-api.md](quality/20261004-screen-spec-with-real-api.md) |
 
 ### workflow/
 開発プロセス・環境・AI エージェントの運用

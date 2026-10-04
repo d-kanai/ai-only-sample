@@ -51,6 +51,8 @@ import {
 //       対（<name>.feature ⇔ <name>.steps.ts）・中身は rule-tests/e2e-feature.test.ts が見る。
 //     例外: apps/backend/spec/domain/ の下の .feature（domain 仕様。Issue #318）もこの規則の対象外。置き場所と対・中身は
 //       rule-tests/domain-spec.test.ts の domain-spec-placement / domain-spec-pair などが見る。
+//     例外: apps/frontend_customer/features/<f>/screens/ の下の .feature（画面仕様。Issue #456）もこの規則の対象外。置き場所と対・
+//       中身は rule-tests/screen-spec.test.ts の screen-spec-placement / screen-spec-pair などが見る。
 //   - api-journey-feature-pair（Issue #200）: apps/backend/spec/journey/ の直下の <name>.feature には、同じ場所に
 //     <name>.api-journey.test.ts（step の実装）が要り、<name>.api-journey.test.ts には <name>.feature が要る。片方だけ・
 //     名前の違う組（a.feature と b.api-journey.test.ts）は、対の無いほうのファイルを違反にする。
@@ -205,12 +207,19 @@ const OTHER_FEATURE_DIRS = [
   "apps/e2e/",
 ];
 
-// spec/journey/ の外で、置き場所の違反として見るファイルか（API 仕様・domain 仕様・E2E の .feature を除く）。
+// 画面仕様の置き場所（Issue #456）。features/<f>/screens/ の下の .feature は画面仕様のもので、api-journey-placement の対象外
+//   （置き場所と対・中身は rule-tests/screen-spec.test.ts が見る）。
+// WHY 前方一致の一覧（OTHER_FEATURE_DIRS）に入れない: <f> は feature ごとに変わるので、決まった接頭辞で書けない。
+const SCREEN_FEATURE_DIR =
+  /^apps\/frontend_customer\/features\/[^/]+\/screens\//;
+
+// spec/journey/ の外で、置き場所の違反として見るファイルか（API 仕様・domain 仕様・E2E・画面仕様の .feature を除く）。
 function isOutsideApiJourneyTarget(path: string): boolean {
   return (
     OUTSIDE_API_JOURNEY_FILE.test(path) &&
     !(
-      OTHER_FEATURE_DIRS.some((dir) => path.startsWith(dir)) &&
+      (OTHER_FEATURE_DIRS.some((dir) => path.startsWith(dir)) ||
+        SCREEN_FEATURE_DIR.test(path)) &&
       path.endsWith(".feature")
     )
   );
@@ -630,7 +639,7 @@ describeFeature(feature, ({ Scenario }) => {
     "API ジャーニーの置き場所（isMisplacedApiJourneyFile）",
     ({ And }) => {
       And(
-        "spec/journey/ の直下の API ジャーニーと .feature、層の下のテストとソース、名前の一部だけが同じファイル、spec/api/ と spec/domain/ の下の .feature は違反なし",
+        "spec/journey/ の直下の API ジャーニーと .feature、層の下のテストとソース、名前の一部だけが同じファイル、spec/api/ と spec/domain/ と画面のディレクトリの下の .feature は違反なし",
         () => {
           // given
           const cases: [string, string][] = [
@@ -668,6 +677,11 @@ describeFeature(feature, ({ Scenario }) => {
               "apps/backend/spec/domain/ の下の .feature（domain 仕様）",
               "apps/backend/spec/domain/todo/todo.feature",
             ],
+            // 画面仕様の .feature は screen-spec.test.ts が見る（Issue #456）。
+            [
+              "apps/frontend_customer/features/<f>/screens/ の下の .feature（画面仕様）",
+              "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.feature",
+            ],
           ];
 
           // when
@@ -681,7 +695,7 @@ describeFeature(feature, ({ Scenario }) => {
       );
 
       And(
-        "spec/journey/ の名前の違うテスト・テスト以外・サブディレクトリの中、spec/journey/ の外のジャーニーと .feature、spec/api/ と spec/domain/ の下の API ジャーニーは違反",
+        "spec/journey/ の名前の違うテスト・テスト以外・サブディレクトリの中、spec/journey/ の外のジャーニーと .feature、spec/api/ と spec/domain/ と画面のディレクトリの下の API ジャーニーは違反",
         () => {
           // given
           const cases: [string, string][] = [
@@ -779,6 +793,15 @@ describeFeature(feature, ({ Scenario }) => {
             [
               "spec/domain の前方一致だけの別ディレクトリの .feature",
               "apps/backend/spec/domain-x/todo/x.feature",
+            ],
+            // 画面仕様の例外も features/<f>/screens/ の下の .feature だけ（Issue #456）。
+            [
+              "frontend の feature の screens/ の外の .feature",
+              "apps/frontend_customer/features/todo/x.feature",
+            ],
+            [
+              "frontend の feature の screens/ の下の API ジャーニー",
+              "apps/frontend_customer/features/todo/screens/x/x.api-journey.test.ts",
             ],
           ];
 
@@ -1972,6 +1995,9 @@ describeFeature(feature, ({ Scenario }) => {
           // domain 仕様の .feature も対象外（中身に DB があっても見ない。domain-spec.test.ts が見る。Issue #318）。
           "apps/backend/spec/domain/todo/todo.feature":
             "Feature: domain の DB\n",
+          // 画面仕様の .feature も対象外（中身に DB があっても見ない。screen-spec.test.ts が見る。Issue #456）。
+          "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.feature":
+            "Feature: 画面の DB\n",
           "apps/backend/spec/api/todo/x.api-journey.test.ts": source(
             ...REQUIRED_IMPORTS,
           ),

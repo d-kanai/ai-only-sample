@@ -790,6 +790,65 @@ describeFeature(feature, ({ Scenario }) => {
         },
       );
 
+      // 画面仕様の step（features/<f>/screens/<name>/<name>.screen-spec.test.tsx）の例外: 実 DB の準備（backend の test-support/database）と
+      //   前提の行を入れるテストデータビルダー（backend の test-support/<feature>/<名前>-builder）だけは、../ で読む。
+      //   WHY: どちらも backend の exports に載せない（rule-tests/test-support.test.ts の exports-test-support）ので @repo/backend/ では
+      //   解決できず、@/ は frontend の中だけを指す。例外は biome.json の 2 つ目の override で、この 2 つの参照先と画面仕様の置き場所に絞る。
+      And(
+        "画面仕様の step だけは backend の test-support/database とテストデータビルダーへの ../ が 0 で終わり、ほかの ../（backend の別のファイル・frontend の中・ビルダーでない test-support）と、ほかのテスト・置き場所の違う画面仕様の同じ import は非 0 で終わる",
+        () => {
+          // given
+          const spec =
+            "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.screen-spec.test.tsx";
+          const backend = "../../../../../backend";
+          const allowed: [string, string][] = [
+            [spec, `${backend}/test-support/database`],
+            [spec, `${backend}/test-support/todo/todo-builder`],
+          ];
+          const rejected: [string, string][] = [
+            [spec, `${backend}/shared/drizzle/database`],
+            [spec, `${backend}/test-support/todo/todo-repository.in-memory`],
+            [spec, `${backend}/test-support/database-x`],
+            [spec, "../todo-detail-screen/todo-detail-screen.messages"],
+            [
+              "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.test.tsx",
+              `${backend}/test-support/database`,
+            ],
+            [
+              "apps/frontend_customer/features/todo/screens/todo-screen/nested/todo-screen.screen-spec.test.tsx",
+              `${backend}/test-support/database`,
+            ],
+            [
+              "apps/frontend_customer/features/todo/todo-screen.screen-spec.test.tsx",
+              `${backend}/test-support/database`,
+            ],
+          ];
+          const lines = (specifier: string) => [
+            `import { value } from "${specifier}";`,
+            "export const used = value;",
+          ];
+
+          // when
+          const passed = allowed.map(([path, specifier]) =>
+            checkAt(path, lines(specifier)),
+          );
+          const failed = rejected.map(([path, specifier]) =>
+            checkAt(path, lines(specifier)),
+          );
+
+          // then
+          for (const [index, { status, output }] of passed.entries()) {
+            expect(status, `${allowed[index]}\n${output}`).toBe(0);
+          }
+          for (const [index, { status, output }] of failed.entries()) {
+            expect(status, `${rejected[index]}\n${output}`).not.toBe(0);
+            expect(output, String(rejected[index])).toContain(
+              "noRestrictedImports",
+            );
+          }
+        },
+      );
+
       And(
         "apps/frontend_customer の外の ../ の import は 0 で終わる（backend と e2e は相対パスを使う・前方一致だけが同じ別ディレクトリ・リポジトリ直下）",
         () => {

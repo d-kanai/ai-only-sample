@@ -262,3 +262,55 @@ describe("AppDatabase.get / AppDatabase.close", () => {
     });
   });
 });
+
+// テストの差し替え口（画面仕様。.claude/rules/quality/testing.md の「画面仕様」）。api ファイルは読み込んだときに AppDatabase.get().db で
+//   組み立てるので、その前に use でテスト用のスキーマの接続を渡す。
+describe("AppDatabase.use / AppDatabase.release", () => {
+  test("use で渡した接続を、以後の AppDatabase.get が返す（env の設定でプールを作らない）", () => {
+    // given
+    const fake = fakePool();
+    const handle = AppDatabase.create(CONFIG, fake.create);
+
+    // when
+    AppDatabase.use(handle);
+    const result = AppDatabase.get();
+
+    // then
+    expect(result).toBe(handle);
+    expect(fake.configs).toHaveLength(1);
+    AppDatabase.release();
+  });
+
+  test("すでに接続を持っていれば use は失敗し、持っている接続はそのまま残す（作ったプールを閉じずに捨てない）", () => {
+    // given
+    const before = AppDatabase.get();
+    const other = AppDatabase.create(CONFIG, fakePool().create);
+
+    // when
+    const action = () => AppDatabase.use(other);
+
+    // then
+    expect(action).toThrow(Error);
+    expect(action).toThrowError(
+      new Error(
+        "AppDatabase already holds a pool: call AppDatabase.close() before AppDatabase.use()",
+      ),
+    );
+    expect(AppDatabase.get()).toBe(before);
+  });
+
+  test("release は接続を閉じずに手放し、次の AppDatabase.get は新しいプールを作る", () => {
+    // given
+    const fake = fakePool();
+    const handle = AppDatabase.create(CONFIG, fake.create);
+    AppDatabase.use(handle);
+
+    // when
+    AppDatabase.release();
+    const next = AppDatabase.get();
+
+    // then
+    expect(fake.end).not.toHaveBeenCalled();
+    expect(next).not.toBe(handle);
+  });
+});

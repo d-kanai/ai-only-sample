@@ -96,6 +96,30 @@ export class AppDatabase {
     return holder.__appDatabase;
   }
 
+  // 渡した接続を、プロセスで 1 つの接続にする（以後の AppDatabase.get が返す）。テストだけが使う差し替え口。
+  // WHY 要る: api ファイルはモジュールを読み込んだときに AppDatabase.get().db で本番の handler を組み立てる。画面仕様
+  //   （.claude/rules/quality/testing.md の「画面仕様」）は route.ts を通して本番の handler を呼ぶので、読み込む前にテスト用の
+  //   スキーマの接続（apps/backend/test-support/database.ts の TestDatabase.installAsAppDatabase）を渡しておく。
+  // WHY holder を外から書き換えさせず、ここに口を置く: 置き場所（globalThis のキー）を知るのはこのクラスだけにし、置き場所を変えても
+  //   テストを直さずに済む。
+  // WHY すでに持っていれば失敗する: 持っているのは env の設定で作ったプールで、上書きすると閉じられないまま残る（接続が漏れる）。
+  //   先に close させる。
+  // WHY 英語の文言: apps/backend の非テストコードには自然言語の日本語を置かない（Issue #116）。
+  static use(database: DatabaseHandle): void {
+    if (holder.__appDatabase !== undefined) {
+      throw new Error(
+        "AppDatabase already holds a pool: call AppDatabase.close() before AppDatabase.use()",
+      );
+    }
+    holder.__appDatabase = database;
+  }
+
+  // use で渡した接続を、閉じずに手放す（次の AppDatabase.get は env の設定で新しいプールを作る）。
+  // WHY 閉じない: use で渡した接続は渡した側（TestDatabase）のもので、閉じるのも渡した側（テスト用のスキーマを消してから閉じる）。
+  static release(): void {
+    holder.__appDatabase = undefined;
+  }
+
   // プールを閉じる（接続をすべて切る）。テストの後始末や、プロセスを終える前に使う。
   static async close(): Promise<void> {
     const database = holder.__appDatabase;

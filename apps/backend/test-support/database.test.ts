@@ -5,6 +5,7 @@ import { env } from "@repo/shared/env";
 import { sql } from "drizzle-orm";
 import { Client } from "pg";
 import { describe, expect, test, vi } from "vitest";
+import { AppDatabase } from "../shared/drizzle/database";
 import { TestDatabase, TestSchemas } from "./database";
 
 // 実 Postgres（compose.yaml）に対して実行する。
@@ -119,6 +120,63 @@ describe("TestDatabase.create", () => {
       expect(references.rows).toEqual([{ referenced: "todos" }]);
     } finally {
       await database.close();
+    }
+  });
+});
+
+// 画面仕様（.claude/rules/quality/testing.md の「画面仕様」）が、route.ts を通す本番の handler をテスト用のスキーマにつなぐための口。
+describe("TestDatabase.installAsAppDatabase", () => {
+  test("installAsAppDatabase の後の AppDatabase.get は、テスト用のスキーマの接続を返す", async () => {
+    // given
+    const database = await TestDatabase.create();
+    try {
+      // when
+      database.installAsAppDatabase();
+      const current = await AppDatabase.get().db.execute<{ schema: string }>(
+        sql`select current_schema() as schema`,
+      );
+      const own = await database.db.execute<{ schema: string }>(
+        sql`select current_schema() as schema`,
+      );
+
+      // then
+      expect(AppDatabase.get()).toEqual({
+        db: database.db,
+        pool: database.pool,
+      });
+      expect(current.rows).toEqual(own.rows);
+    } finally {
+      await database.close();
+    }
+  });
+
+  test("close は AppDatabase の接続を手放す（閉じたプールを AppDatabase.get が返し続けない）", async () => {
+    // given
+    const database = await TestDatabase.create();
+    database.installAsAppDatabase();
+
+    // when
+    await database.close();
+
+    // then
+    expect(
+      (globalThis as { __appDatabase?: unknown }).__appDatabase,
+    ).toBeUndefined();
+  });
+
+  test("installAsAppDatabase を呼んでいなければ、close は AppDatabase の接続に触れない", async () => {
+    // given
+    const database = await TestDatabase.create();
+    const other = await TestDatabase.create();
+    other.installAsAppDatabase();
+    try {
+      // when
+      await database.close();
+
+      // then
+      expect(AppDatabase.get().pool).toBe(other.pool);
+    } finally {
+      await other.close();
     }
   });
 });
