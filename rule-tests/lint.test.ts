@@ -102,8 +102,9 @@ function checkSource(fileName: string, lines: string[]) {
 }
 
 // complexity/noStaticOnlyClass の override（Issue #262）: apps/backend/**・apps/shared/**・apps/e2e/** と、apps/frontend_customer の
-//   features/**・shared/**・test-support/** のうち *.tsx・*.jsx・*.hook.*・*.test.* 以外だけ off にする。どれも最上位に関数を置かず（apps/e2e は
-//   spec 以外の補助。database.ts の E2eDatabase。frontend は React 以外のモジュール。todo-api.ts の TodoApi）、状態の無い補助を
+//   features/**・shared/**・test-support/**・spec/** のうち *.tsx・*.jsx・*.hook.*・*.test.* 以外だけ off にする。どれも最上位に
+//   関数を置かず（apps/e2e は spec 以外の補助。database.ts の E2eDatabase。frontend は React 以外のモジュール。todo-api.ts の
+//   TodoApi と、画面仕様の補助 spec/screen/<f>/support.ts の SavedTodos）、状態の無い補助を
 //   static だけのクラスにする（ADR docs/adr/architecture/20261002-class-based-backend.md・20261002-class-based-shared-and-test-support.md・
 //   20261002-class-based-frontend-modules.md）。範囲は rule-tests/architecture.test.ts の規則 class-based の対象と同じにする。
 //   frontend の React の component（*.tsx・*.jsx）・hook（*.hook.*）・app/・直下のファイル（Next の規約）は関数のままなので、
@@ -588,7 +589,7 @@ describeFeature(feature, ({ Scenario }) => {
     "biome check の noStaticOnlyClass は apps/backend・apps/shared・apps/e2e と frontend の React 以外のモジュールだけで off（Issue #262）",
     ({ And }) => {
       And(
-        "apps/backend・apps/shared・apps/e2e・frontend の React 以外のモジュールでは static だけのクラスが 0 で終わる（backend の shared/error・features の infra・test-support、apps/shared、apps/e2e、frontend の features・shared・test-support の .ts と .mts）",
+        "apps/backend・apps/shared・apps/e2e・frontend の React 以外のモジュールでは static だけのクラスが 0 で終わる（backend の shared/error・features の infra・test-support、apps/shared、apps/e2e、frontend の features・shared・test-support の .ts と .mts と spec/ の support.ts）",
         () => {
           // given
           const cases: [string][] = [
@@ -603,6 +604,7 @@ describeFeature(feature, ({ Scenario }) => {
               "apps/frontend_customer/shared/request-log/nested/static-only.mts",
             ],
             ["apps/frontend_customer/test-support/static-only.ts"],
+            ["apps/frontend_customer/spec/screen/todo/support.ts"],
           ];
 
           for (const [path] of cases) {
@@ -644,6 +646,14 @@ describeFeature(feature, ({ Scenario }) => {
             ["apps/frontend_customer/static-only.ts", "frontend の直下"],
             [
               "apps/frontend_customer/features-x/static-only.ts",
+              "名前の前方一致だけが同じ別ディレクトリ",
+            ],
+            [
+              "apps/frontend_customer/spec/screen/todo/support.tsx",
+              "frontend の spec/ の JSX を書く補助（React の component と同じ扱い）",
+            ],
+            [
+              "apps/frontend_customer/spec-x/static-only.ts",
               "名前の前方一致だけが同じ別ディレクトリ",
             ],
             [
@@ -869,6 +879,73 @@ describeFeature(feature, ({ Scenario }) => {
 
             // then
             expect(status, `${path}\n${output}`).toBe(0);
+          }
+        },
+      );
+
+      // 画面仕様の step（spec/screen/<f>/<name>.screen-spec.test.tsx）の例外: 実 DB の準備（backend の test-support/database）と
+      //   前提の行を入れるテストデータビルダー（backend の test-support/<feature>/<名前>-builder）だけは、../ で読む。
+      //   WHY: どちらも backend の exports に載せない（rule-tests/test-support.test.ts の exports-test-support）ので @repo/backend/ では
+      //   解決できず、@/ は frontend の中だけを指す。例外は biome.json の 2 つ目の override で、この 2 つの参照先と画面仕様の置き場所に絞る。
+      And(
+        "画面仕様の step だけは backend の test-support/database とテストデータビルダーへの ../ が 0 で終わり、ほかの ../（backend の別のファイル・frontend の中・ビルダーでない test-support）と、ほかのテスト・support・置き場所の違う画面仕様の同じ import は非 0 で終わる",
+        () => {
+          // given
+          const spec =
+            "apps/frontend_customer/spec/screen/todo/todo-screen.screen-spec.test.tsx";
+          const backend = "../../../../backend";
+          const allowed: [string, string][] = [
+            [spec, `${backend}/test-support/database`],
+            [spec, `${backend}/test-support/todo/todo-builder`],
+          ];
+          const rejected: [string, string][] = [
+            [spec, `${backend}/shared/drizzle/database`],
+            [spec, `${backend}/test-support/todo/todo-repository.in-memory`],
+            [spec, `${backend}/test-support/database-x`],
+            [
+              spec,
+              "../../../features/todo/screens/todo-screen/todo-screen.messages",
+            ],
+            [spec, "../other/support"],
+            [
+              "apps/frontend_customer/spec/screen/todo/support.ts",
+              `${backend}/test-support/database`,
+            ],
+            [
+              "apps/frontend_customer/spec/screen/todo/todo-screen.test.tsx",
+              `${backend}/test-support/database`,
+            ],
+            [
+              "apps/frontend_customer/spec/screen/todo/nested/todo-screen.screen-spec.test.tsx",
+              `../${backend}/test-support/database`,
+            ],
+            [
+              "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.screen-spec.test.tsx",
+              `../${backend}/test-support/database`,
+            ],
+          ];
+          const lines = (specifier: string) => [
+            `import { value } from "${specifier}";`,
+            "export const used = value;",
+          ];
+
+          // when
+          const passed = allowed.map(([path, specifier]) =>
+            checkAt(path, lines(specifier)),
+          );
+          const failed = rejected.map(([path, specifier]) =>
+            checkAt(path, lines(specifier)),
+          );
+
+          // then
+          for (const [index, { status, output }] of passed.entries()) {
+            expect(status, `${allowed[index]}\n${output}`).toBe(0);
+          }
+          for (const [index, { status, output }] of failed.entries()) {
+            expect(status, `${rejected[index]}\n${output}`).not.toBe(0);
+            expect(output, String(rejected[index])).toContain(
+              "noRestrictedImports",
+            );
           }
         },
       );

@@ -156,6 +156,7 @@
         "apps/frontend_customer/features/**",
         "apps/frontend_customer/shared/**",
         "apps/frontend_customer/test-support/**",
+        "apps/frontend_customer/spec/**",
         "!**/*.tsx",
         "!**/*.jsx",
         "!**/*.hook.*",
@@ -184,6 +185,34 @@
                   {
                     "group": ["..", "../*", "../**"],
                     "message": "frontend でディレクトリをまたぐ import は @/<path> で書き、../ は使わない（.claude/rules/code/frontend.md の「import と exports」の表）。"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/frontend_customer/spec/screen/*/*.screen-spec.test.tsx"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "..",
+                      "../*",
+                      "../**",
+                      "!../../../../backend/test-support/database",
+                      "!../../../../backend/test-support/*/*-builder"
+                    ],
+                    "message": "画面仕様の step で ../ を使ってよいのは backend の test-support/database とテストデータビルダーだけ（.claude/rules/quality/lint.md の overrides）。ほかは @/<path> で書く。"
                   }
                 ]
               }

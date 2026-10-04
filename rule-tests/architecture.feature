@@ -4,10 +4,10 @@ Feature: ディレクトリ構成ルール（依存の向き）
   Scenario: 依存の向き（rules の code/architecture-check.md）
     * 検査の対象から参照を取り出せている（抽出が壊れて 0 件になり、すべての規則が素通りするのを防ぐ）
     * apps/backend/ のソースファイルは apps/backend/features/<f>/internal/ の domain/・application/・presentation/・infra/ のどれかの下か、apps/backend/shared/ の error/・transaction/・http/・drizzle/・change-log/ のどれかの下か、モジュールの公開の入口 apps/backend/features/<f>/expose/ の直下か、テストだけが使う apps/backend/test-support/ の下か、API 仕様の補助 apps/backend/spec/api/<feature>/support.ts に置く
-    * apps/frontend_customer/ のソースファイルは app/・features/・shared/・test-support/ の下か、直下の next.config.ts・instrumentation.ts・instrumentation-node.ts・proxy.ts・next-env.d.ts だけに置く
+    * apps/frontend_customer/ のソースファイルは app/・features/・shared/・test-support/ の下か、画面仕様の補助 spec/screen/<f>/support.ts（.tsx も）か、直下の next.config.ts・instrumentation.ts・instrumentation-node.ts・proxy.ts・next-env.d.ts だけに置く
     * apps/shared/ に置いてよいのは env.ts・logger.ts・log-event.ts・now.ts とそのテスト（env.test.ts・logger.test.ts・log-event.test.ts・now.test.ts）、env.ts と log-event.ts から分けたクラスのファイル（env-reader.ts・log-field-marks.ts・free-text-mask.ts・request-log-schema.ts・log-severity.ts）、package.json・tsconfig.json だけ
     * apps/shared の全ファイル（ソース・テスト・package.json・tsconfig.json）を列挙できている（列挙が壊れて素通りするのを防ぐ）
-    * apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/backend/ への参照は "@repo/backend/..." の書き方だけ（相対パスや "@/../backend/" を使わない。例外は vitest.global-setup.ts → test-support/database の相対パスだけ）
+    * apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/backend/ への参照は "@repo/backend/..." の書き方だけ（相対パスや "@/../backend/" を使わない。対象はテスト以外のソース。例外は vitest.global-setup.ts → test-support/database の相対パスだけ）
     * apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/shared/ への参照は "@repo/shared/..." の書き方だけ（相対パスや "@/../shared/" を使わない）
     * apps/backend/ は apps/frontend_customer/ を参照しない
     * apps/backend/ の中の自前コードへの import は相対パスだけで（"@/" と "@repo/backend/" を使わない）、apps/shared へは "@repo/shared/..." だけ（相対パスは使わない）
@@ -45,13 +45,15 @@ Feature: ディレクトリ構成ルール（依存の向き）
     * apps/backend の presentation と shared/http の api ファイル（<名前>.api.ts）のクラスの handle の中に try / catch を書かない（エラーの変換は ProblemResponse.wrap に任せる。try / finally は可。テストは除く）
     * ProblemResponse.from を書いてよいのは apps/backend/shared/http/problem.ts だけ（api は ProblemResponse.wrap 経由で使う。apps/backend の本番コードが対象で、テストは除く）
     * ProblemResponse.from の規則は、本物の api ファイル 8 本を対象にし、problem.ts とテストは対象にしない（列挙が壊れて素通りするのを防ぐ）
-    * apps/backend と apps/shared の本番コードとテストの補助（apps/backend の test-support/・spec/ の support.ts、apps/e2e の <名前>.spec.<名前> 以外）と apps/frontend_customer の features/・shared/・test-support/ の React 以外のモジュール（<名前>.tsx・<名前>.jsx・<名前>.hook.<名前> 以外）はファイルの最上位に関数を置かない（テストと E2E の <名前>.spec.<名前>、frontend の app/ と直下のファイルは除く。function 宣言・関数を入れた変数・export default の関数は違反。クラスのメソッド・クラスフィールドのアロー関数・メソッドの中の関数は可）
+    * AppDatabase.use と AppDatabase.release を書いてよいのはテストとテストの補助（apps/<アプリ>/test-support/）だけ（apps/backend・apps/frontend_customer・apps/shared の本番コードが対象。本番コードが release を呼ぶとプールを閉じずに手放し、接続が漏れる）
+    * AppDatabase.use と release の規則は、本物の api ファイル 8 本と database.ts を対象にし、test-support/ とテストは対象にしない（列挙が壊れて素通りするのを防ぐ）
+    * apps/backend と apps/shared の本番コードとテストの補助（apps/backend の test-support/・spec/ の support.ts、apps/e2e の <名前>.spec.<名前> 以外）と apps/frontend_customer の features/・shared/・test-support/・spec/ の React 以外のモジュール（<名前>.tsx・<名前>.jsx・<名前>.hook.<名前> 以外）はファイルの最上位に関数を置かない（テストと E2E の <名前>.spec.<名前>、frontend の app/ と直下のファイルは除く。function 宣言・関数を入れた変数・export default の関数は違反。クラスのメソッド・クラスフィールドのアロー関数・メソッドの中の関数は可）
     * 規則 class-based の対象のファイルでは、インスタンスのメンバー（コンストラクタ・static でないメソッド・フィールド・アクセサ）を持つクラスに static のメンバーを置かない（自分のクラスか Promise<自分のクラス> を返す static のファクトリは可。static だけのクラスは対象外）
     * apps/backend/features/<f>/internal/domain/ のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）は、型注釈に string・number・bigint を含まない（string[]・string | undefined などの合成も違反。値は VO のクラスにする。VO が中身を持つ名前 value のフィールドは可。boolean・Date・ほかのクラスや型の参照は可。テストは除く）
     * domain の値を VO にする規則は、apps/backend/features/<f>/internal/domain/ の本番コード（todo.ts・feature-flags.ts）を対象にし、テストと domain の外は対象にしない（列挙が壊れて素通りするのを防ぐ）
     * apps/frontend_customer/ の本番コードは react の useCallback・useMemo・memo を使わない（"react" からの名前付きの import・別名・re-export と、React.useMemo のような名前空間の参照が違反。React Compiler がメモ化する。テストは除く）
     * 手の memo の規則は、apps/frontend_customer の本番コード（画面の hook・Provider・app/ の layout・test-support/）を対象にし、テストと apps/frontend_customer の外は対象にしない（列挙が壊れて素通りするのを防ぐ）
-    * 最上位に関数を置かない規則は、apps/backend の本番コード（層・expose・drizzle.config.ts）・apps/shared の本番コード・テストの補助（test-support/・spec/ の support.ts・apps/e2e/ の spec 以外）・frontend の React 以外のモジュール（features/・shared/ の .ts）を対象にし、テスト・E2E の .spec.ts・リポジトリ直下・frontend の .tsx・.hook.ts・app/・直下のファイルは対象にしない（列挙が壊れて素通りするのを防ぐ）
+    * 最上位に関数を置かない規則は、apps/backend の本番コード（層・expose・drizzle.config.ts）・apps/shared の本番コード・テストの補助（test-support/・spec/ の support.ts・apps/e2e/ の spec 以外）・frontend の React 以外のモジュール（features/・shared/ の .ts と spec/ の support.ts）を対象にし、テスト・E2E の .spec.ts・リポジトリ直下・frontend の .tsx・.hook.ts・app/・直下のファイルは対象にしない（列挙が壊れて素通りするのを防ぐ）
     * apps/backend/package.json の exports は、外（apps/frontend_customer・apps/e2e/・リポジトリ直下）が "@repo/backend/..." で参照するものをすべて含み、参照されないキーを持たず、各キーはそのパスの .ts を指す
     * apps/shared/package.json の exports は、外（apps/frontend_customer・apps/backend・apps/e2e/・リポジトリ直下）が "@repo/shared/..." で参照するものをすべて含み、参照されないキーを持たず、各キーはそのパスの .ts を指す
     * apps/backend の exports を 1 件以上読め、apps/frontend_customer の @repo/backend の参照を取り出せている（読み込みや列挙が壊れて素通りするのを防ぐ）
@@ -121,6 +123,9 @@ Feature: ディレクトリ構成ルール（依存の向き）
   Scenario: ProblemResponse.from を problem.ts だけに書く規則の判定（problem-response-from-only-in-problem）
     * 違反例（PROBLEM_RESPONSE_FROM_EXAMPLES.violating）はすべて違反になる
     * 許可例（PROBLEM_RESPONSE_FROM_EXAMPLES.allowed）はどれも違反にならない
+  Scenario: AppDatabase.use と release をテストとテストの補助だけに書く規則の判定（app-database-swap-only-in-tests）
+    * 違反例（APP_DATABASE_SWAP_EXAMPLES.violating）はすべて違反になる
+    * 許可例（APP_DATABASE_SWAP_EXAMPLES.allowed）はどれも違反にならない
   Scenario: backend と apps/shared の本番コードとテストの補助、frontend の React 以外のモジュールの最上位に関数を置かない規則の判定（class-based）
     * 違反例（CLASS_BASED_EXAMPLES.violating）はすべて違反になる
     * 許可例（CLASS_BASED_EXAMPLES.allowed）はどれも違反にならない

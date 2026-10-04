@@ -4,7 +4,7 @@ import { env } from "@repo/shared/env";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Client, Pool } from "pg";
-import type { Database } from "../shared/drizzle/database";
+import { AppDatabase, type Database } from "../shared/drizzle/database";
 
 // 実 Postgres を使う単体テスト（*.postgres.test.ts など）のための、テスト専用の DB を用意する部品。
 // 本番のコードからは使わない。test-support/ に置くのが目印で、本番のコードからの import は rule-tests/test-support.test.ts が止め、
@@ -49,6 +49,9 @@ export class TestDatabase {
     private readonly schema: string,
   ) {}
 
+  // installAsAppDatabase で AppDatabase に渡したか（close で手放すため）。
+  private installedAsAppDatabase = false;
+
   // 接続先は env の DATABASE_URL（アプリと同じ。.env / 環境変数から env.ts が読んで検証した値で、既定値は無い）。
   static async create(): Promise<TestDatabase> {
     const url = env.DATABASE_URL;
@@ -88,8 +91,24 @@ export class TestDatabase {
     });
   }
 
-  // テスト用のスキーマを消し、接続を閉じる。
+  // この接続を、プロセスで 1 つの接続（AppDatabase.get が返すもの）にする。close で手放す。
+  // WHY 要る: 画面仕様（.claude/rules/quality/testing.md の「画面仕様」）は、route.ts を通して本番の handler（api ファイルの
+  //   export const GET など）を呼ぶ。本番の handler は api ファイルを読み込んだときに AppDatabase.get().db で組み立てるので、
+  //   読み込む前にこのスキーマの接続を渡しておけば、handler がテスト用のスキーマの表を読み書きする。
+  // 限界: 渡す前に api ファイルを読み込んでいると、その handler は env の DB を使ったままになる（読み込みの順は画面仕様の
+  //   apps/frontend_customer/test-support/route-fetch.ts の RouteFetch が、リクエストのときに読み込むことで守る）。
+  installAsAppDatabase(): void {
+    AppDatabase.use({ db: this.db, pool: this.pool });
+    this.installedAsAppDatabase = true;
+  }
+
+  // テスト用のスキーマを消し、接続を閉じる。installAsAppDatabase で渡していれば、AppDatabase から手放す。
+  // WHY 手放す: 閉じたプールを AppDatabase.get が返し続けると、後の呼び出しが「Cannot use a pool after calling end」で失敗する。
+  // WHY 渡していなければ触れない: AppDatabase が持つのは別の接続（別の TestDatabase や env のプール）で、それを外すと閉じないまま残る。
   async close(): Promise<void> {
+    if (this.installedAsAppDatabase) {
+      AppDatabase.release();
+    }
     await this.pool.query(`drop schema ${this.schema} cascade`);
     await this.pool.end();
   }

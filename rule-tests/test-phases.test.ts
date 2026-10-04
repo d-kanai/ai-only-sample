@@ -36,6 +36,8 @@ import { casesByName } from "./case-table";
 //     テスト 1 つになり、前提から検証までを 1 つの step で書くため（.claude/rules/quality/testing.md の「API 仕様テスト（spec/api）」）。
 //   - domain 仕様（`*.domain-spec.test.ts`）の step。API 仕様と同じく `*` の step 1 つが前提から検証までの 1 テスト（Issue #318。
 //     rule-tests/domain-spec.test.ts）。
+//   - 画面仕様（`*.screen-spec.test.tsx`）の step。API 仕様と同じく `*` の step 1 つが前提から検証までの 1 テスト（Issue #456。
+//     rule-tests/screen-spec.test.ts）。
 //   - ルール検査テスト（rule-tests/ の直下の `*.test.ts`）の step。API 仕様と同じく `*` の step 1 つが前提から検証までの 1 テスト
 //     （Issue #282。rule-tests/rule-test-feature.test.ts）。
 //   WHY API ジャーニー（`*.api-journey.test.ts`）の step は対象外: step の Given / When / Then のキーワード自体がフェーズを表し、
@@ -448,12 +450,13 @@ function listTestFiles(root: string): string[] {
   return TARGET_DIRS.flatMap(walk).sort();
 }
 
-// step（`*`）1 つが前提から検証までの 1 テストになるファイル: API 仕様・domain 仕様（Issue #318）と、rule-tests/ の直下の
+// step（`*`）1 つが前提から検証までの 1 テストになるファイル: API 仕様・domain 仕様（Issue #318）・画面仕様（Issue #456）と、rule-tests/ の直下の
 //   ルール検査テスト（Issue #282 で .feature と step の実装に分けた。rule-tests/rule-test-feature.test.ts）。
 function isStepFile(path: string): boolean {
   return (
     path.endsWith(".api-spec.test.ts") ||
     path.endsWith(".domain-spec.test.ts") ||
+    path.endsWith(".screen-spec.test.tsx") ||
     /^rule-tests\/[^/]+\.test\.ts$/.test(path)
   );
 }
@@ -878,6 +881,7 @@ describeFeature(feature, ({ Scenario }) => {
         "apps/backend/spec/api/todo/a.api-spec.test.ts": step,
         "apps/backend/spec/domain/todo/e.domain-spec.test.ts": step,
         "apps/backend/spec/journey/b.api-journey.test.ts": step,
+        "apps/frontend/f.screen-spec.test.tsx": step,
         "rule-tests/c.test.ts": step,
         "rule-tests/nested/d.test.ts": step,
         "apps/backend/helper.ts": bare,
@@ -902,6 +906,7 @@ describeFeature(feature, ({ Scenario }) => {
           "apps/backend/spec/domain/todo/e.domain-spec.test.ts",
           "apps/backend/spec/journey/b.api-journey.test.ts",
           "apps/backend/x.test.ts",
+          "apps/frontend/f.screen-spec.test.tsx",
           "apps/frontend/y.test.tsx",
           "rule-tests/c.test.ts",
           "rule-tests/nested/d.test.ts",
@@ -910,6 +915,7 @@ describeFeature(feature, ({ Scenario }) => {
           missing("apps/backend/spec/api/todo/a.api-spec.test.ts", 1),
           missing("apps/backend/spec/domain/todo/e.domain-spec.test.ts", 1),
           missing("apps/backend/x.test.ts", 1),
+          missing("apps/frontend/f.screen-spec.test.tsx", 1),
           missing("apps/frontend/y.test.tsx", 2),
           missing("rule-tests/c.test.ts", 1),
         ],
@@ -951,6 +957,7 @@ describeFeature(feature, ({ Scenario }) => {
             "apps/backend/features/todo/internal/domain/todo.test.ts",
             "apps/backend/spec/api/todo/create-todo.api-spec.test.ts",
             "apps/backend/spec/domain/todo/todo.domain-spec.test.ts",
+            "apps/frontend_customer/spec/screen/todo/todo-screen.screen-spec.test.tsx",
             "rule-tests/architecture.test.ts",
           ]),
         );

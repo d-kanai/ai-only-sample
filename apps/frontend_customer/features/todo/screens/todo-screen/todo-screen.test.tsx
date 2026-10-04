@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { useFeatureFlag } from "@/features/feature-flag";
@@ -9,7 +9,9 @@ import { commonMessages } from "@/shared/i18n/common.messages";
 import { EnLocale, JaLocale, tJa } from "@/test-support/i18n";
 import { todoScreenMessages } from "./todo-screen.messages";
 
-// 画面は「hook の状態を描き、操作を hook に渡す」ことを検証する。API は差し替え、操作の結果として呼ばれたかで見る。
+// 画面の表示・操作・異常系の仕様は、実 DB まで通す画面仕様（todo-screen.feature と todo-screen.screen-spec.test.tsx）が持つ。
+// ここには画面仕様で起こせないもの・業務でない見た目の仕組みだけを残す: 決まった文言（見出し・ボタン）と en の表示、フィーチャーフラグの
+//   off、作成の API が返さない失敗（400 の errors の組み合わせ・404）、項目の誤りの DOM の位置（label の外・入力の後ろ）。API は差し替える。
 // 再取得などの細かいロジックは todo-screen.hook.test.ts で固定している。
 vi.mock("@/features/todo/api/todo-api");
 // フィーチャーフラグ（Issue #156）は feature-flag feature の公開 API（index）で差し替える（WHY は todo-screen.hook.test.ts の同じ箇所）。
@@ -52,19 +54,6 @@ test("level 1 の見出しに Todo が表示される", async () => {
   expect(await screen.findByRole("list")).toBeDefined();
 });
 
-test("一覧の取得中は読み込み中と表示され、取得後は Todo が表示される", async () => {
-  // given
-  vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
-
-  // when
-  render(<TodoScreen />, { wrapper: JaLocale });
-
-  // then
-  expect(screen.getByText(tJa(todoScreenMessages, "loading"))).toBeDefined();
-  expect(await screen.findByRole("link", { name: "牛乳を買う" })).toBeDefined();
-  expect(screen.queryByText(tJa(todoScreenMessages, "loading"))).toBeNull();
-});
-
 test("エラーが無いときは alert を表示しない", async () => {
   // given
   vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
@@ -75,50 +64,6 @@ test("エラーが無いときは alert を表示しない", async () => {
   // then
   expect(await screen.findByRole("link", { name: "牛乳を買う" })).toBeDefined();
   expect(screen.queryByRole("alert")).toBeNull();
-});
-
-// submit のイベントを document で受け、既定の動作が止められたか（defaultPrevented）を見る。
-// WHY document で受ける: React は画面のハンドラを描いた根の要素で受ける（イベントの委譲）ので、その先の document に届いた時点で
-//   画面のハンドラ（atom の Form の preventDefault）は動き終わっている。
-test("追加のフォームを送信しても、ブラウザの既定の送信（ページの再読み込み）はしない", async () => {
-  // given
-  const user = userEvent.setup();
-  vi.mocked(TodoApi.list).mockResolvedValue({ todos: [] });
-  render(<TodoScreen />, { wrapper: JaLocale });
-  await screen.findByRole("list");
-  const submitted: Event[] = [];
-  document.addEventListener("submit", (event) => submitted.push(event), {
-    once: true,
-  });
-
-  // when
-  await user.click(
-    screen.getByRole("button", {
-      name: tJa(todoScreenMessages, "form.submit"),
-    }),
-  );
-
-  // then
-  expect(submitted.map((event) => event.defaultPrevented)).toEqual([true]);
-});
-
-test("一覧の取得に失敗すると、エラーのキーを翻訳した文言が alert として表示される", async () => {
-  // given
-  vi.mocked(TodoApi.list).mockRejectedValue(
-    new ApiError({
-      status: 500,
-      type: "/problems/internal-error",
-      key: "server.internalError",
-    }),
-  );
-
-  // when
-  render(<TodoScreen />, { wrapper: JaLocale });
-
-  // then
-  expect((await screen.findByRole("alert")).textContent).toBe(
-    tJa(commonMessages, "server.internalError"),
-  );
 });
 
 // 画面の文言が LocaleProvider のロケールに従うこと（ja と en で違う文言のキーで見る）。
@@ -136,22 +81,6 @@ test("LocaleProvider のロケールが en なら、英語の文言で表示す�
   expect(screen.getByRole("button", { name: "Add" })).toBeDefined();
 });
 
-// 一覧の 1 行（TodoListSection の中の TodoItem）。部品は export しないので、画面を描いて見る。
-test("一覧の行の title は、詳細画面 /todo/<id> へのリンクとして表示される", async () => {
-  // given
-  vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
-
-  // when
-  render(<TodoScreen />, { wrapper: JaLocale });
-
-  // then
-  expect(
-    (await screen.findByRole("link", { name: "牛乳を買う" })).getAttribute(
-      "href",
-    ),
-  ).toBe("/todo/todo-1");
-});
-
 test("詳細画面のフラグが off なら、一覧の行の title はリンクにせず文字だけで表示する", async () => {
   // given
   vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
@@ -163,25 +92,6 @@ test("詳細画面のフラグが off なら、一覧の行の title はリン�
   // then
   expect(await screen.findByText("牛乳を買う")).toBeDefined();
   expect(screen.queryByRole("link")).toBeNull();
-});
-
-test("一覧の行の完了チェックボックスは、Todo の completed を反映する", async () => {
-  // given
-  vi.mocked(TodoApi.list).mockResolvedValue({
-    todos: [{ ...milk, completed: true }],
-  });
-
-  // when
-  render(<TodoScreen />, { wrapper: JaLocale });
-
-  // then
-  expect(
-    (
-      (await screen.findByRole("checkbox", {
-        name: tJa(todoScreenMessages, "toggle", { title: "牛乳を買う" }),
-      })) as HTMLInputElement
-    ).checked,
-  ).toBe(true);
 });
 
 // aria-label は title を含む（行の数だけ並ぶ削除ボタンを区別する）が、見えるのは「削除」だけ。
@@ -202,20 +112,6 @@ test("一覧の行の削除ボタンには、辞書の削除の文言が見え�
   ).toBe(tJa(todoScreenMessages, "delete"));
 });
 
-// テストの実行環境のタイムゾーンは UTC（vitest.config.mts の test.env.TZ）。画面はブラウザのタイムゾーンで出す。
-test("一覧の行の作成日時を、ロケールの書式とブラウザのタイムゾーンで <time> に出す", async () => {
-  // given
-  vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
-
-  // when
-  render(<TodoScreen />, { wrapper: JaLocale });
-
-  // then
-  const time = await screen.findByText("2026/09/28 0:00");
-  expect(time.tagName).toBe("TIME");
-  expect(time.getAttribute("datetime")).toBe("2026-09-28T00:00:00.000Z");
-});
-
 test("LocaleProvider のロケールが en なら、一覧の行も英語の文言と書式で表示する", async () => {
   // given
   vi.mocked(TodoApi.list).mockResolvedValue({ todos: [milk] });
@@ -233,89 +129,6 @@ test("LocaleProvider のロケールが en なら、一覧の行も英語の文�
     screen.getByRole("button", { name: "Delete “牛乳を買う”" }).textContent,
   ).toBe("Delete");
   expect(screen.getByText("Sep 28, 2026, 12:00 AM")).toBeDefined();
-});
-
-test("title を入力して追加ボタンを押すと、その title で作成され一覧に表示される", async () => {
-  // given
-  vi.mocked(TodoApi.list)
-    .mockResolvedValueOnce({ todos: [] })
-    .mockResolvedValueOnce({ todos: [milk] });
-  vi.mocked(TodoApi.create).mockResolvedValue(milk);
-  const user = userEvent.setup();
-  render(<TodoScreen />, { wrapper: JaLocale });
-  await screen.findByRole("list");
-  const titleInput = screen.getByRole("textbox", {
-    name: tJa(todoScreenMessages, "form.newTitle"),
-  });
-  const submitButton = screen.getByRole("button", {
-    name: tJa(todoScreenMessages, "form.submit"),
-  });
-
-  // when
-  await user.type(titleInput, "牛乳を買う");
-  await user.click(submitButton);
-
-  // then
-  expect(await screen.findByRole("link", { name: "牛乳を買う" })).toBeDefined();
-  expect(TodoApi.create).toHaveBeenCalledWith({ title: "牛乳を買う" });
-  expect(
-    (
-      screen.getByRole("textbox", {
-        name: tJa(todoScreenMessages, "form.newTitle"),
-      }) as HTMLInputElement
-    ).value,
-  ).toBe("");
-});
-
-test("完了チェックボックスを押すと、その Todo が完了に更新される", async () => {
-  // given
-  vi.mocked(TodoApi.list)
-    .mockResolvedValueOnce({ todos: [milk] })
-    .mockResolvedValueOnce({ todos: [{ ...milk, completed: true }] });
-  vi.mocked(TodoApi.changeCompletion).mockResolvedValue({
-    ...milk,
-    completed: true,
-  });
-  const user = userEvent.setup();
-  render(<TodoScreen />, { wrapper: JaLocale });
-  const checkbox = await screen.findByRole("checkbox", {
-    name: tJa(todoScreenMessages, "toggle", { title: "牛乳を買う" }),
-  });
-
-  // when
-  await user.click(checkbox);
-
-  // then
-  expect(
-    await screen.findByRole("checkbox", {
-      name: tJa(todoScreenMessages, "toggle", { title: "牛乳を買う" }),
-      checked: true,
-    }),
-  ).toBeDefined();
-  expect(TodoApi.changeCompletion).toHaveBeenCalledWith("todo-1", true);
-});
-
-test("削除ボタンを押すと、その Todo が削除され一覧から消える", async () => {
-  // given
-  vi.mocked(TodoApi.list)
-    .mockResolvedValueOnce({ todos: [milk] })
-    .mockResolvedValueOnce({ todos: [] });
-  vi.mocked(TodoApi.delete).mockResolvedValue(undefined);
-  const user = userEvent.setup();
-  render(<TodoScreen />, { wrapper: JaLocale });
-  const deleteButton = await screen.findByRole("button", {
-    name: tJa(todoScreenMessages, "deleteAria", { title: "牛乳を買う" }),
-  });
-
-  // when
-  await user.click(deleteButton);
-
-  // then
-  // 削除後の再取得が反映されるまで待つ。
-  await waitFor(() =>
-    expect(screen.queryByRole("link", { name: "牛乳を買う" })).toBeNull(),
-  );
-  expect(TodoApi.delete).toHaveBeenCalledWith("todo-1");
 });
 
 // 400 の項目ごとの誤り（ApiError の errors）は、その入力の直下に出し、aria-describedby と aria-invalid で入力と結び付ける。

@@ -176,6 +176,7 @@ paths:
 | 常に Postgres | 各 api ファイルのテストが、本番の handler が Postgres の Repository と runner を呼ぶことを prototype の spy で確かめる（DB には接続しない） | - | レビュー |
 | 常に Postgres | `pnpm dev` の前にも `pnpm db:up` と `pnpm db:migrate` が要る。api ファイルを読み込むテストは `.env` が要る | - | 説明 |
 | 接続とプール | プールは `env` の値で作り `globalThis` に 1 つだけ持つ。アイドル中の接続のエラーはログに出すだけ。`AppDatabase.close()` はテストの後始末だけで使い、SIGTERM では呼ばない | HMR でプールを増やさない。停止時は Next.js が処理中の要求を待って終了し、接続はプロセスの終了で切れる | 説明 |
+| 接続とプール | `AppDatabase.use` / `AppDatabase.release` はテストとテストの補助（`test-support/`）だけで使う（画面仕様が `TestDatabase.installAsAppDatabase()` を通して、本番の handler の接続をテスト用のスキーマにする） | 本番クラスの public static にある差し替え口で、本番コードが `release` を呼ぶとプールを閉じずに手放し、接続が漏れる（Issue #456） | `rule-tests/architecture.test.ts` の `app-database-swap-only-in-tests` |
 | 書き込み | Postgres の Repository はコンストラクタで `Database`（query の読み取り用）だけを受け取り、トランザクションを張らない（command が張って `tx` を渡す） | - | `rule-tests/persistence.test.ts` の `no-direct-transaction` |
 | insert / update | Entity は読み込んだとき（`reconstruct`）の値を `origin` に持ち（`create` は `undefined`、遷移メソッドは引き継ぐ）、`update` はそれと今の値を `ChangedProps.of` で比べた差分だけを書く | 遷移メソッドに差分を記録させると書き漏れた変更が保存されない。どの列・SQL にするかは infra の都合 | `rule-tests/persistence.test.ts` の `update-uses-changed-props`・`entity-with-reconstruct-has-origin` |
 | insert / update | `origin` は private フィールド（getter で読む）にし、列挙されるプロパティに出さない | 値の等価と直列化に混ざらない | レビュー |
