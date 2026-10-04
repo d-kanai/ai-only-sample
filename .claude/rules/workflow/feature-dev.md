@@ -7,6 +7,6 @@
    - API ジャーニー: `apps/backend/spec/journey/<usecase>.feature`（複数の API を業務の流れの順に）
    - API 仕様: `apps/backend/spec/api/<feature>/<api>.feature`（API 1 つの振る舞い）
    - domain 仕様: `apps/backend/spec/domain/<feature>/<name>.feature`（Entity の業務ルール）
-   - 画面仕様: `apps/frontend_customer/features/<f>/screens/<name>/<name>.feature`（画面の表示・操作・異常系）
+   - 画面仕様: `apps/frontend_customer/spec/screen/<feature>/<screen>.feature`（画面の表示・操作・異常系）
 2. 整合性を確かめる: 5 種を並べて、同じ規則が食い違っていないか（文言・境界値・エラーの扱い）、ある層にだけあって別の層に要る仕様が抜けていないかを見る。ルールに無く自分で決めたことは、PR の「実装経緯」に一覧で書く。
 3. TDD で実装する: 問題が無ければ、.feature を満たす実装をテストから進める（CLAUDE.md の 2.）。どのテストから着手するか（domain から外へ・E2E から内へなど）は AI が判断してよい。実装中に仕様を変えるときは、1. の .feature を先に直して 2. をやり直す。

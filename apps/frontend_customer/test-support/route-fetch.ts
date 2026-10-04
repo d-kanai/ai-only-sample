@@ -3,7 +3,7 @@ import { join, sep } from "node:path";
 
 // テスト専用（本番のコードからは使わない。test-support/ に置くのが目印。rule-tests/test-support.test.ts が本番からの import を止め、
 //   .dockerignore の **/test-support でイメージに入らない）。
-// 画面仕様（features/<f>/screens/<name>/<name>.screen-spec.test.tsx。.claude/rules/quality/testing.md の「画面仕様」）のために、
+// 画面仕様（spec/screen/<f>/<name>.screen-spec.test.tsx。.claude/rules/quality/testing.md の「画面仕様」）のために、
 //   画面が送る fetch を、ネットワークではなく app/api の Route Handler（route.ts が re-export する backend の handler）の
 //   直接の呼び出しに替える。
 // WHY fetch を替える（TodoApi・FeatureFlagApi を差し替えない）: 画面 → hook → api/ → fetch → Route Handler → backend → Postgres の

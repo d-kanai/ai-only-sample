@@ -20,18 +20,23 @@ import { containsForbiddenWord } from "./feature-business-language";
 // 画面仕様（.claude/rules/quality/testing.md の「画面仕様」、ADR docs/adr/quality/20261004-screen-spec-with-real-api.md）の置き場所と
 //   形を、ファイルの一覧とソースで機械的に検査するテスト。
 // 画面仕様 = 画面 1 つ（apps/frontend_customer/features/<f>/screens/<name>/<name>.tsx）の表示項目・インタラクション・異常系を、人が読む
-//   仕様として <name>.feature に業務の言葉で書き、step の実装（<name>.screen-spec.test.tsx）が本物の画面・hook・api/ と、route.ts を
-//   通した本番の handler・実 Postgres で確かめるテスト。`*` の 1 行 = 1 振る舞い = 1 テスト（API 仕様と同じ）。
+//   仕様として apps/frontend_customer/spec/screen/<f>/<name>.feature に業務の言葉で書き、step の実装（同じ場所の
+//   <name>.screen-spec.test.tsx）が本物の画面・hook・api/ と、route.ts を通した本番の handler・実 Postgres で確かめるテスト。
+//   `*` の 1 行 = 1 振る舞い = 1 テスト（API 仕様と同じ）。
 // 違反にするもの:
-//   - screen-spec-placement: apps/frontend_customer/ の下の *.feature と *.screen-spec.test.*（拡張子は広く取る）は、
-//     features/<f>/screens/<name>/ の直下の <name>.feature と <name>.screen-spec.test.tsx だけ。画面のディレクトリの外・名前が
-//     ディレクトリと違う・入れ子・.ts の step は違反。
-//     WHY 画面のディレクトリに置く: 画面を消すときに仕様もディレクトリごと消せる（画面・hook・辞書と同じ。frontend.md の「feature」）。
-//       名前をディレクトリと同じにすると、どの画面の仕様かがファイル名で分かり、対の検査ができる。
+//   - screen-spec-placement: apps/frontend_customer/ の下の *.feature と *.screen-spec.test.*（拡張子は広く取る）と、
+//     apps/frontend_customer/spec/ の下のすべてのファイルは、spec/screen/<f>/ の直下の <name>.feature・<name>.screen-spec.test.tsx・
+//     support.ts（.tsx も）だけ。画面のディレクトリ・spec/screen/ の直下・入れ子・.ts の step・ほかの名前のファイルは違反。
+//     WHY spec/screen/<f>/ に置く: backend の API 仕様（apps/backend/spec/api/<feature>/）と同じ形にし、人が読む仕様を spec/ の下で
+//       拾い読みできるようにする（daiki の要望）。spec/ は .dockerignore の **/spec でイメージから外れる（rule-tests/test-support.test.ts
+//       の dockerignore-excludes）。名前を画面のディレクトリと同じにすると、どの画面の仕様かがファイル名で分かり、対の検査ができる。
+//     WHY spec/ の下はほかのファイルを置かない: 補助の置き場所を feature ごとの support の 1 つにそろえる（API 仕様の support.ts と
+//       同じ）。保存先を読む補助を support で見分ける規則（screen-spec-operation-reads-saved）もこれを前提にする。
 //     WHY .tsx だけ: 画面を render するので JSX を書く。置き場所を 1 つにすると、ほかの検査（Biome の ../ の例外・test-doubles の
 //       db-tests-in-infra-only の例外）もこの名前に絞れる。
-//   - screen-spec-pair: 画面（features/<f>/screens/<name>/<name>.tsx）ごとに <name>.feature と <name>.screen-spec.test.tsx の両方が要る
-//     （無いほうを画面のファイルの違反にする）。画面の無い .feature・step の実装は、そのファイルの違反にする。
+//   - screen-spec-pair: 画面（features/<f>/screens/<name>/<name>.tsx）ごとに spec/screen/<f>/<name>.feature と
+//     <name>.screen-spec.test.tsx の両方が要る（無いほうを画面のファイルの違反にする）。画面の無い .feature・step の実装は、そのファイルの
+//     違反にする（feature も画面の名前もそろうものだけを対にする）。support は対を見ない。
 //     WHY: 画面ごとに、表示・操作・異常系の仕様を漏れなく持つ（daiki の要望。api ファイルごとの API 仕様と同じ）。.feature だけでは
 //       何も実行されず、step の実装だけでは読む仕様が無い。
 //   以下は .feature（置き場所の正しいもの）の中身の規則。行の読み方は API 仕様（rule-tests/api-spec.test.ts）と同じ:
@@ -50,6 +55,16 @@ import { containsForbiddenWord } from "./feature-business-language";
 //     （rule-tests/feature-business-language.ts。API 仕様・E2E と共有）の禁止語があれば違反。
 //     WHY: daiki は .feature を項目として読み、コードは読まない。保存先の表・状態コードなどの確かめ方は step の実装に閉じる。
 //   以下は step の実装（置き場所の正しい <name>.screen-spec.test.tsx）の中身の規則:
+//   - screen-spec-operation-reads-saved: step（`Given(` / `When(` / `Then(` / `And(` / `But(` の呼び出し 1 つ）の中で利用者の操作
+//     （userEvent の click / dblClick / tripleClick / hover / unhover / tab / keyboard / pointer / type / clear / selectOptions /
+//     deselectOptions / upload / paste / copy / cut を受け手を問わず `.<名前>(` で、`fireEvent.<名前>(`）を呼ぶなら、同じ step の中に
+//     `expect(<Saved…>.<メソッド>(` か `expect(await <Saved…>.<メソッド>(` が要る（無ければ step の呼び出しの行の違反）。<Saved…> は
+//     ./support（拡張子付きも）から値で import した名前（別名なら別名）のうち Saved で始まるもの。
+//     WHY: 画面に出ただけでは、キャッシュの書き換えだけで保存されていない誤りを見逃す。書き込みが起きる操作では変わった後の行を、
+//       起きないはずの操作（空白だけ・長すぎる・送っても再読み込みしない など）でも行が変わっていないことを確かめる（daiki の要望）。
+//     WHY expect に直接渡す: 読んだ結果を確かめることを字句で決める。変数に入れてから expect すると、何を確かめたかを追えない。
+//     限界: 操作を補助の関数の中で呼ぶ・メソッドを別名で呼ぶと操作に数えない。support の Saved… が実際に保存先を読んでいるか、
+//       expect の後の比べ方（resolves.toEqual で行を丸ごと比べているか）は見ない（reviewer が見る）。
 //   - screen-spec-mock-only-navigation: `vi.mock(` / `vi.doMock(` の第 1 引数が文字列の "next/navigation" でなければ、その行の違反。
 //     WHY: 画面仕様は画面 → API → 保存先のつながりで確かめる（daiki の要望「step はモックを使わない」）。差し替えてよいのは、テストの中では
 //       動かない次の画面への遷移（next/navigation の useRouter など）だけ。
@@ -81,11 +96,12 @@ import { containsForbiddenWord } from "./feature-business-language";
 //     見ない（reviewer が見る）。禁止語は一覧の語だけ。
 //   - step の実装: vi を別名で import する・`vi["mock"]`・require・変数を渡す import(x) は見ない。`vi.spyOn`・`vi.stubGlobal`・
 //     `vi.fn` は止めない（fetch の差し替えは route-fetch を使うことを求めるだけで、ほかの差し替えを足していないかは reviewer が見る）。
-//     step が実際に画面を操作し、保存された行を確かめているかは見ない（reviewer が見る）。
-// 列挙: apps/frontend_customer/ の下（node_modules・.next は除く）の *.feature・*.screen-spec.test.*・画面のファイル。列挙が 0 件なら
-//   実ファイルのテストで失敗させる（0 件だと違反も 0 件で常に緑になる）。
-// WHY 文字列で判定する（AST にしない）: 見るのはパス・行の先頭のキーワード・import の参照先・呼び出しの第 1 引数だけで、正規表現で
-//   足りる（rule-tests/api-spec.test.ts と同じ）。
+//     step が .feature の振る舞いのとおりに画面を操作しているかは見ない（reviewer が見る）。
+// 列挙: apps/frontend_customer/ の下（node_modules・.next は除く）の *.feature・*.screen-spec.test.*・画面のファイルと、spec/ の下の
+//   すべてのファイル。列挙が 0 件なら実ファイルのテストで失敗させる（0 件だと違反も 0 件で常に緑になる）。
+// WHY 文字列で判定する（AST にしない）: 見るのはパス・行の先頭のキーワード・import の参照先・呼び出しの第 1 引数と、step の呼び出しの
+//   かっこの範囲（文字列を空白にしてから数える）だけで、正規表現とかっこの対で足りる（rule-tests/api-spec.test.ts と同じ）。
+//   限界: 正規表現のリテラルの中のかっこは数えてしまう（step の範囲がずれる）。
 
 type ScreenSpecRuleId =
   | "screen-spec-placement"
@@ -98,6 +114,7 @@ type ScreenSpecRuleId =
   | "screen-spec-step-star"
   | "screen-spec-business-language"
   | "screen-spec-mock-only-navigation"
+  | "screen-spec-operation-reads-saved"
   | "screen-spec-no-feature-api"
   | "screen-spec-no-in-memory"
   | "screen-spec-uses-real-database"
@@ -127,13 +144,19 @@ const SKIPPED_DIRS = new Set(["node_modules", ".next"]);
 const FEATURE_FILE = /\.feature$/;
 // 画面仕様の step の名前（置き場所の検査のため、拡張子は広く取る）。
 const STEP_FILE = /\.screen-spec\.test\.[cm]?[jt]sx?$/;
-// 置き場所の正しい .feature・step の実装（1: 画面のディレクトリ、2: 画面の名前、3: 種類）。
+// 画面仕様の置き場所の根。この下のファイルはすべて対象（置けるのは .feature・step・support だけ）。
+const SPEC_ROOT = `${FRONTEND_DIR}/spec/`;
+// 置き場所の正しい .feature・step の実装（1: feature、2: 画面の名前、3: 種類）。
 const PLACED = new RegExp(
-  `^(${FRONTEND_DIR}/features/[^/]+/screens/([^/]+))/\\2\\.(feature|screen-spec\\.test\\.tsx)$`,
+  `^${FRONTEND_DIR}/spec/screen/([^/]+)/([^/]+)\\.(feature|screen-spec\\.test\\.tsx)$`,
 );
-// 画面のファイル（1: 画面のディレクトリ、2: 画面の名前）。
+// 置き場所の正しい補助（feature ごとに 1 つ。step だけが import する）。
+const SUPPORT_FILE = new RegExp(
+  `^${FRONTEND_DIR}/spec/screen/[^/]+/support\\.tsx?$`,
+);
+// 画面のファイル（1: feature、2: 画面の名前）。
 const SCREEN_FILE = new RegExp(
-  `^(${FRONTEND_DIR}/features/[^/]+/screens/([^/]+))/\\2\\.tsx$`,
+  `^${FRONTEND_DIR}/features/([^/]+)/screens/([^/]+)/\\2\\.tsx$`,
 );
 
 const TEST_DATABASE_MODULE = "apps/backend/test-support/database";
@@ -151,16 +174,20 @@ const NAVIGATION_MODULE = "next/navigation";
 
 function isTarget(path: string): boolean {
   return (
-    FEATURE_FILE.test(path) || STEP_FILE.test(path) || SCREEN_FILE.test(path)
+    FEATURE_FILE.test(path) ||
+    STEP_FILE.test(path) ||
+    SCREEN_FILE.test(path) ||
+    path.startsWith(SPEC_ROOT)
   );
 }
 
-// 画面のディレクトリと名前から、対の 3 つ（画面・.feature・step の実装）のパス。
-function pairOf(dir: string, name: string) {
+// feature と画面の名前から、対の 3 つ（画面・.feature・step の実装）のパス。
+function pairOf(feature: string, name: string) {
+  const spec = `${FRONTEND_DIR}/spec/screen/${feature}`;
   return {
-    screen: `${dir}/${name}.tsx`,
-    feature: `${dir}/${name}.feature`,
-    steps: `${dir}/${name}.screen-spec.test.tsx`,
+    screen: `${FRONTEND_DIR}/features/${feature}/screens/${name}/${name}.tsx`,
+    feature: `${spec}/${name}.feature`,
+    steps: `${spec}/${name}.screen-spec.test.tsx`,
   };
 }
 
@@ -178,19 +205,14 @@ function findPairViolations(
       .filter((needed) => !files.has(needed))
       .map((needed) => ({
         rule: "screen-spec-pair",
-        note: `${posix.basename(needed)} が無い`,
+        note: `${needed} が無い`,
       }));
   }
   const placed = PLACED.exec(path);
   const pair = pairOf(placed?.[1] ?? "", placed?.[2] ?? "");
   return files.has(pair.screen)
     ? []
-    : [
-        {
-          rule: "screen-spec-pair",
-          note: `${posix.basename(pair.screen)} が無い`,
-        },
-      ];
+    : [{ rule: "screen-spec-pair", note: `${pair.screen} が無い` }];
 }
 
 // .feature の 1 行の種類（rule-tests/api-spec.test.ts の featureLineKind と同じ）。
@@ -474,6 +496,64 @@ function findSkipViolations(code: string): ScreenSpecViolation[] {
   }));
 }
 
+// ./support（拡張子付きも）から値で import した名前のうち、Saved で始まるもの（別名なら別名）。code はコメントを消したもの。
+// WHY 置き場所と名前の両方で見分ける: 保存先を読む補助を feature ごとの support の 1 か所に集め、名前の Saved で「保存された行を
+//   読む」ものだと分かるようにする。名前だけだと step のファイルの中に同じ名前の別の関数（画面の表示を読むなど）を置いて逃れられ、
+//   置き場所だけだと support の中の前提を作る補助（行を消すなど）も確かめに数えてしまう。
+function savedReaderNames(code: string): string[] {
+  return [
+    ...code.matchAll(
+      /\bimport\s*\{([^}]*)\}\s*from\s*(["'])\.\/support(?:\.tsx?)?\2/g,
+    ),
+  ].flatMap((match) =>
+    (match[1] ?? "")
+      .split(",")
+      .map((name) => name.trim())
+      .filter((name) => name !== "" && !/^type\s/.test(name))
+      .map((name) => name.split(/\s+as\s+/).pop() ?? "")
+      .filter((name) => /^Saved/.test(name))
+      // WHY $ を逃がす: 名前に使える $ は正規表現の終わりの印になる（下の readsSaved で名前を正規表現に埋め込む）。
+      .map((name) => name.replaceAll("$", "\\$")),
+  );
+}
+
+// 開きかっこの位置から、対の閉じかっこの位置（無ければ末尾）。code は文字列を空白にしたもの。
+function closingParen(code: string, open: number): number {
+  let depth = 0;
+  for (let index = open; index < code.length; index += 1) {
+    if (code[index] === "(") depth += 1;
+    if (code[index] === ")") depth -= 1;
+    if (depth === 0) return index;
+  }
+  return code.length;
+}
+
+// screen-spec-operation-reads-saved: 利用者の操作（userEvent の click / type など・fireEvent・DOM の click）を呼ぶ step のうち、
+//   同じ step の中で ./support の Saved で始まる補助の呼び出しを expect に直接渡していないもの。行は step の呼び出しの行。
+// WHY 操作の受け手を問わない: userEvent.setup() の戻り値の名前は step ごとに決まらない（user・u など）ので、操作の名前で見る。
+function findOperationViolations(code: string): ScreenSpecViolation[] {
+  const blanked = blankStrings(code);
+  const readers = savedReaderNames(code);
+  const operation =
+    /(?:\.\s*(?:click|dblClick|tripleClick|hover|unhover|tab|keyboard|pointer|type|clear|selectOptions|deselectOptions|upload|paste|copy|cut)|\bfireEvent\s*\.\s*\w+)\s*\(/;
+  const readsSaved = (step: string) =>
+    readers.some((name) =>
+      new RegExp(
+        `\\bexpect\\s*\\(\\s*(?:await\\s+)?${name}\\s*\\.\\s*\\w+\\s*\\(`,
+      ).test(step),
+    );
+  return [...blanked.matchAll(/\b(?:Given|When|Then|And|But)\s*\(/g)]
+    .filter((call) => {
+      const open = call.index + call[0].length - 1;
+      const step = blanked.slice(open, closingParen(blanked, open) + 1);
+      return operation.test(step) && !readsSaved(step);
+    })
+    .map((call) => ({
+      rule: "screen-spec-operation-reads-saved",
+      line: lineAt(code, call.index),
+    }));
+}
+
 // step の実装の中身の違反（行の順。ファイルの違反（行なし）は最後）。
 function findStepContentViolations(
   path: string,
@@ -525,6 +605,7 @@ function findStepContentViolations(
   const name = posix.basename(path).replace(STEP_FILE, "");
   return [
     ...findMockViolations(code),
+    ...findOperationViolations(code),
     ...importViolations,
     ...findLoadFeatureViolations(code, `./${name}.feature`),
     ...findSkipViolations(code),
@@ -543,6 +624,9 @@ function findScreenSpecViolations(
 ): ScreenSpecViolation[] {
   if (SCREEN_FILE.test(path)) {
     return findPairViolations(path, files);
+  }
+  if (SUPPORT_FILE.test(path)) {
+    return [];
   }
   if (!PLACED.test(path)) {
     return [{ rule: "screen-spec-placement" }];
@@ -602,8 +686,10 @@ const source = (...lines: string[]) => lines.join("\n");
 const SCREENS = "apps/frontend_customer/features/todo/screens";
 const SCREEN_DIR = `${SCREENS}/x-screen`;
 const SCREEN = `${SCREEN_DIR}/x-screen.tsx`;
-const FEATURE = `${SCREEN_DIR}/x-screen.feature`;
-const STEPS = `${SCREEN_DIR}/x-screen.screen-spec.test.tsx`;
+const SPEC_DIR = "apps/frontend_customer/spec/screen/todo";
+const FEATURE = `${SPEC_DIR}/x-screen.feature`;
+const STEPS = `${SPEC_DIR}/x-screen.screen-spec.test.tsx`;
+const SUPPORT = `${SPEC_DIR}/support.ts`;
 
 // 業務の言葉だけで、3 つの見出しを順に置いた .feature（must reject の例は、これに違反を足す）。
 const GOOD_FEATURE = [
@@ -622,7 +708,7 @@ const GOOD_FEATURE = [
 const GOOD_STEPS = [
   'import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";',
   'import { vi } from "vitest";',
-  'import { TestDatabase } from "../../../../../backend/test-support/database";',
+  'import { TestDatabase } from "../../../../backend/test-support/database";',
   'import { RouteFetch } from "@/test-support/route-fetch";',
   'vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));',
   'const feature = await loadFeature("./x-screen.feature");',
@@ -653,14 +739,16 @@ describeFeature(feature, ({ Scenario }) => {
     "置き場所と対（findScreenSpecViolations の screen-spec-placement・screen-spec-pair）",
     ({ And }) => {
       And(
-        "画面のディレクトリの .feature と step の実装と、画面仕様でないファイルは違反なし（画面・hook のテスト・ほかの名前の .tsx など）",
+        "spec/screen/<f>/ の .feature と step の実装と support と、画面仕様でないファイルは違反なし（画面・hook のテスト・ほかの名前の .tsx など）",
         () => {
           // given: 対の 3 つがそろっている
-          const all = new Set([SCREEN, FEATURE, STEPS]);
+          const all = new Set([SCREEN, FEATURE, STEPS, SUPPORT]);
           const cases: [string, string, string][] = [
             ["画面", SCREEN, ""],
             [".feature", FEATURE, source(...GOOD_FEATURE)],
             ["step の実装", STEPS, source(...GOOD_STEPS)],
+            ["support.ts", SUPPORT, "export class SavedTodos {}"],
+            ["support.tsx", `${SPEC_DIR}/support.tsx`, ""],
           ];
           const outside = [
             `${SCREEN_DIR}/x-screen.test.tsx`,
@@ -683,7 +771,7 @@ describeFeature(feature, ({ Scenario }) => {
       );
 
       And(
-        "画面のディレクトリの外・名前の違う・拡張子の違う .feature と step の実装は、置き場所の違反だけになる（中身と対は見ない）",
+        "spec/screen/<f>/ の外・入れ子・拡張子の違う .feature と step の実装と、spec/ の下のほかのファイルは、置き場所の違反だけになる（中身と対は見ない）",
         () => {
           // given
           const cases: [string, string][] = [
@@ -692,20 +780,28 @@ describeFeature(feature, ({ Scenario }) => {
               "feature の直下の .feature",
               "apps/frontend_customer/features/todo/x-screen.feature",
             ],
-            ["screens の直下の .feature", `${SCREENS}/x-screen.feature`],
+            ["画面のディレクトリの .feature", `${SCREEN_DIR}/x-screen.feature`],
             [
-              "名前がディレクトリと違う .feature",
-              `${SCREEN_DIR}/other.feature`,
+              "画面のディレクトリの step",
+              `${SCREEN_DIR}/x-screen.screen-spec.test.tsx`,
+            ],
+            [
+              "spec/screen の直下の .feature",
+              "apps/frontend_customer/spec/screen/x-screen.feature",
+            ],
+            [
+              "spec の直下の step",
+              "apps/frontend_customer/spec/x-screen.screen-spec.test.tsx",
             ],
             [
               "入れ子のディレクトリの .feature",
-              `${SCREEN_DIR}/nested/nested.feature`,
+              `${SPEC_DIR}/nested/x-screen.feature`,
             ],
+            [".ts の step", `${SPEC_DIR}/x-screen.screen-spec.test.ts`],
             [
-              "名前がディレクトリと違う step",
-              `${SCREEN_DIR}/other.screen-spec.test.tsx`,
+              "前方一致だけの別ディレクトリの step",
+              "apps/frontend_customer/spec/screen-x/todo/x-screen.screen-spec.test.tsx",
             ],
-            [".ts の step", `${SCREEN_DIR}/x-screen.screen-spec.test.ts`],
             [
               "components の step",
               "apps/frontend_customer/features/todo/components/x.screen-spec.test.tsx",
@@ -714,6 +810,15 @@ describeFeature(feature, ({ Scenario }) => {
               "shared の step",
               "apps/frontend_customer/shared/ui/x.screen-spec.test.tsx",
             ],
+            // spec/ の下に置けるのは .feature・step・support だけ（補助の置き場所を support の 1 つにそろえる）。
+            ["spec の下のほかの名前のソース", `${SPEC_DIR}/helper.ts`],
+            ["spec の下の単体テスト", `${SPEC_DIR}/support.test.ts`],
+            [
+              "spec/screen の直下の support",
+              "apps/frontend_customer/spec/screen/support.ts",
+            ],
+            ["spec の下の .js の support", `${SPEC_DIR}/support.js`],
+            ["spec の下の .md", "apps/frontend_customer/spec/README.md"],
           ];
 
           // when
@@ -733,44 +838,54 @@ describeFeature(feature, ({ Scenario }) => {
       );
 
       And(
-        "画面に .feature か step の実装が無い・画面の無い .feature と step の実装は、対の違反になる",
+        "画面に .feature か step の実装が無い・画面の無い .feature と step の実装（feature の違う画面を含む）は、対の違反になる",
         () => {
           // given
+          const noScreen = {
+            rule: "screen-spec-pair" as const,
+            note: `${SCREEN} が無い`,
+          };
+          // feature の違う画面（features/other/screens/x-screen/）は、spec/screen/todo/ の対にならない。
+          const otherFeatureScreen =
+            "apps/frontend_customer/features/other/screens/x-screen/x-screen.tsx";
           const cases: [string, string, string[], ScreenSpecViolation[]][] = [
             [
               "画面に .feature も step も無い",
               SCREEN,
               [SCREEN],
               [
-                { rule: "screen-spec-pair", note: "x-screen.feature が無い" },
-                {
-                  rule: "screen-spec-pair",
-                  note: "x-screen.screen-spec.test.tsx が無い",
-                },
+                { rule: "screen-spec-pair", note: `${FEATURE} が無い` },
+                { rule: "screen-spec-pair", note: `${STEPS} が無い` },
               ],
             ],
             [
               "画面に step だけが無い",
               SCREEN,
               [SCREEN, FEATURE],
+              [{ rule: "screen-spec-pair", note: `${STEPS} が無い` }],
+            ],
+            [
+              "画面の .feature と step が別の feature の下にある",
+              otherFeatureScreen,
+              [otherFeatureScreen, FEATURE, STEPS],
               [
                 {
                   rule: "screen-spec-pair",
-                  note: "x-screen.screen-spec.test.tsx が無い",
+                  note: "apps/frontend_customer/spec/screen/other/x-screen.feature が無い",
+                },
+                {
+                  rule: "screen-spec-pair",
+                  note: "apps/frontend_customer/spec/screen/other/x-screen.screen-spec.test.tsx が無い",
                 },
               ],
             ],
+            ["画面の無い .feature", FEATURE, [FEATURE, STEPS], [noScreen]],
+            ["画面の無い step", STEPS, [FEATURE, STEPS], [noScreen]],
             [
-              "画面の無い .feature",
-              FEATURE,
-              [FEATURE, STEPS],
-              [{ rule: "screen-spec-pair", note: "x-screen.tsx が無い" }],
-            ],
-            [
-              "画面の無い step",
+              "別の feature の画面しか無い step",
               STEPS,
-              [FEATURE, STEPS],
-              [{ rule: "screen-spec-pair", note: "x-screen.tsx が無い" }],
+              [otherFeatureScreen, FEATURE, STEPS],
+              [noScreen],
             ],
           ];
 
@@ -968,8 +1083,8 @@ describeFeature(feature, ({ Scenario }) => {
                 'import { describeFeature, loadFeature } from "@amiceli/vitest-cucumber";',
                 "import {",
                 "  TestDatabase,",
-                '} from "../../../../../backend/test-support/database.ts";',
-                'import { TodoBuilder } from "../../../../../backend/test-support/todo/todo-builder";',
+                '} from "../../../../backend/test-support/database.ts";',
+                'import { TodoBuilder } from "../../../../backend/test-support/todo/todo-builder";',
                 'import { RouteFetch } from "@/test-support/route-fetch.ts";',
                 'import { ScreenSpecProviders } from "@/test-support/screen-spec";',
                 'import type { Todo } from "@/features/todo/api/todo-queries";',
@@ -1051,7 +1166,7 @@ describeFeature(feature, ({ Scenario }) => {
             ],
             [
               "feature の api の相対パス・拡張子付き",
-              'import { TodoApi } from "../../api/todo-api.ts";',
+              'import { TodoApi } from "../../../features/todo/api/todo-api.ts";',
               "screen-spec-no-feature-api",
             ],
             [
@@ -1066,7 +1181,7 @@ describeFeature(feature, ({ Scenario }) => {
             ],
             [
               "InMemory の Repository",
-              'import { InMemoryTodoRepository } from "../../../../../backend/test-support/todo/todo-repository.in-memory";',
+              'import { InMemoryTodoRepository } from "../../../../backend/test-support/todo/todo-repository.in-memory";',
               "screen-spec-no-in-memory",
             ],
             [
@@ -1144,7 +1259,7 @@ describeFeature(feature, ({ Scenario }) => {
           };
           // 2 つを値で import し、対の .feature を読む（呼び出しの有無だけを変える例の共通の行）。
           const importsAndLoad = [
-            'import { TestDatabase } from "../../../../../backend/test-support/database";',
+            'import { TestDatabase } from "../../../../backend/test-support/database";',
             'import { RouteFetch } from "@/test-support/route-fetch";',
             'const feature = await loadFeature("./x-screen.feature");',
           ];
@@ -1153,7 +1268,7 @@ describeFeature(feature, ({ Scenario }) => {
             [
               "型だけの import",
               [
-                'import type { TestDatabase } from "../../../../../backend/test-support/database";',
+                'import type { TestDatabase } from "../../../../backend/test-support/database";',
                 'import { type RouteFetch } from "@/test-support/route-fetch";',
                 'const feature = await loadFeature("./x-screen.feature");',
               ],
@@ -1162,7 +1277,7 @@ describeFeature(feature, ({ Scenario }) => {
             [
               "名前の一部だけが同じ別のモジュール",
               [
-                'import { TestDatabase } from "../../../../../backend/test-support/database-x";',
+                'import { TestDatabase } from "../../../../backend/test-support/database-x";',
                 'import { RouteFetch } from "@/test-support/route-fetch/x";',
                 'const feature = await loadFeature("./x-screen.feature");',
               ],
@@ -1224,30 +1339,268 @@ describeFeature(feature, ({ Scenario }) => {
     },
   );
 
+  Scenario(
+    "操作する step の保存先の確認（findStepContentViolations の screen-spec-operation-reads-saved）: must pass",
+    ({ And }) => {
+      And(
+        "操作する step が ./support の Saved で始まる補助の結果を expect する・操作しない step は確かめなくてよい、は違反なし（await を挟む・別名の import・拡張子付き・複数行・コメントと文字列の中の操作）",
+        () => {
+          // given: GOOD_STEPS の後に import と step を足す
+          const importSaved = 'import { SavedTodos } from "./support";';
+          const cases: [string, string[]][] = [
+            [
+              "入力と送信の後に保存先を resolves で確かめる",
+              [
+                importSaved,
+                'And("追加すると保存される", async () => {',
+                '  await user.type(titleInput(), "牛乳を買う");',
+                "  await user.click(addButton());",
+                "  await expect(SavedTodos.read(database.pool)).resolves.toEqual([]);",
+                "});",
+              ],
+            ],
+            [
+              "await を挟む・複数行の呼び出し・When の step",
+              [
+                importSaved,
+                "When(",
+                '  "消すと保存先からも消える",',
+                "  async () => {",
+                "    await user.clear(input);",
+                "    expect(",
+                "      await SavedTodos",
+                "        .read(database.pool),",
+                "    ).toEqual([]);",
+                "  },",
+                ");",
+              ],
+            ],
+            [
+              "別名の import・拡張子付き・ほかの補助と一緒の import・fireEvent",
+              [
+                'import { TodoTable, SavedTodos as SavedRows } from "./support.ts";',
+                'And("切り替えると保存される", async () => {',
+                "  fireEvent.click(checkbox);",
+                "  expect(await SavedRows.read(database.pool)).toEqual([]);",
+                "});",
+              ],
+            ],
+            [
+              "名前に $ を含む補助",
+              [
+                'import { Saved$Todos } from "./support";',
+                'And("追加すると保存される", async () => {',
+                "  await user.click(addButton());",
+                "  await expect(Saved$Todos.read(database.pool)).resolves.toEqual([]);",
+                "});",
+              ],
+            ],
+            [
+              "操作しない step は保存先を読まなくてよい",
+              [
+                importSaved,
+                'And("一覧に出る", async () => {',
+                "  renderScreen();",
+                '  expect(await screen.findByRole("list")).toBeDefined();',
+                "});",
+              ],
+            ],
+            [
+              "コメントと文字列の中の操作は操作に数えない",
+              [
+                importSaved,
+                'And("user.click( と書いても（操作ではない）", async () => {',
+                "  // await user.click(addButton());",
+                '  const text = "user.type(input)";',
+                "  expect(text).toBe(text);",
+                "});",
+              ],
+            ],
+          ];
+
+          // when
+          const result = casesByName(cases, ([, lines]) =>
+            findStepContentViolations(STEPS, source(...GOOD_STEPS, ...lines)),
+          );
+
+          // then
+          expect(result).toEqual(casesByName(cases, () => []));
+        },
+      );
+    },
+  );
+
+  Scenario(
+    "操作する step の保存先の確認（findStepContentViolations の screen-spec-operation-reads-saved）: must reject",
+    ({ And }) => {
+      And(
+        "操作する step が保存先を読まない・読んでも expect に直接渡さない・ほかの step だけが読む・./support の外や型だけの import や Saved で始まらない名前の補助を使うと、その step の違反になる（fireEvent・別の名前の受け手・When と Given の step）",
+        () => {
+          // given: GOOD_STEPS（8 行）の後に足す。違反の行は操作する step の呼び出しの行。
+          const importSaved = 'import { SavedTodos } from "./support";';
+          const readsSaved =
+            "  await expect(SavedTodos.read(database.pool)).resolves.toEqual([]);";
+          const cases: [string, string[], number][] = [
+            [
+              "操作して保存先を読まない",
+              [
+                importSaved,
+                'And("追加すると一覧に出る", async () => {',
+                "  await user.click(addButton());",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "読んだ結果を変数に入れて expect する（expect に直接渡さない）",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  const rows = await SavedTodos.read(database.pool);",
+                "  expect(rows).toEqual([]);",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "前の step だけが読み、操作する step は読まない",
+              [
+                importSaved,
+                'And("一覧に出る", async () => {',
+                readsSaved,
+                "});",
+                'And("追加すると保存される", async () => {',
+                "  await user.click(addButton());",
+                "});",
+              ],
+              13,
+            ],
+            [
+              "./support の外から import した補助",
+              [
+                'import { SavedTodos } from "./support-x";',
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                readsSaved,
+                "});",
+              ],
+              10,
+            ],
+            [
+              "型だけの import の補助",
+              [
+                'import { type SavedTodos } from "./support";',
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                readsSaved,
+                "});",
+              ],
+              10,
+            ],
+            [
+              "Saved で始まらない名前の補助",
+              [
+                'import { TodoTable } from "./support";',
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  await expect(TodoTable.read(database.pool)).resolves.toEqual([]);",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "コメントと文字列の中だけで読む",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  await user.click(addButton());",
+                "  // await expect(SavedTodos.read(database.pool)).resolves.toEqual([]);",
+                '  const text = "expect(SavedTodos.read(database.pool))";',
+                "});",
+              ],
+              10,
+            ],
+            [
+              "fireEvent で操作して読まない",
+              [
+                importSaved,
+                'And("x", async () => {',
+                "  fireEvent.click(checkbox);",
+                "});",
+              ],
+              10,
+            ],
+            [
+              "別の名前の受け手（u）で入力して読まない",
+              [
+                importSaved,
+                'When("x", async () => {',
+                '  await u.type(input, "牛乳を買う");',
+                "});",
+              ],
+              10,
+            ],
+            [
+              "Given の step で DOM の click を呼んで読まない",
+              [
+                importSaved,
+                'Given("x", async () => {',
+                "  button.click();",
+                "});",
+              ],
+              10,
+            ],
+          ];
+
+          // when
+          const result = casesByName(cases, ([, lines]) =>
+            findStepContentViolations(STEPS, source(...GOOD_STEPS, ...lines)),
+          );
+
+          // then
+          expect(result).toEqual(
+            casesByName(cases, ([, , line]) => [
+              { rule: "screen-spec-operation-reads-saved", line },
+            ]),
+          );
+        },
+      );
+    },
+  );
+
   Scenario("画面仕様の列挙と検査（fixture）", ({ And }) => {
     And(
-      "apps/frontend_customer の下の .feature・step の実装・画面を対象にし（依存・ビルドの出力は除く）、違反を「規則: パス(:行)（理由）」で返す",
+      "apps/frontend_customer の下の .feature・step の実装・画面と spec/ の下のファイルを対象にし（依存・ビルドの出力は除く）、違反を「規則: パス(:行)（理由）」で返す",
       () => {
         // given
         const root = fixture({
           [SCREEN]: "",
           [FEATURE]: source(...GOOD_FEATURE),
           [STEPS]: source(...GOOD_STEPS),
-          // 中身の違反（禁止語・api のモック・import だけで installAsAppDatabase と RouteFetch.install を呼ばない）と、対の欠け
-          //   （.feature と step の無い画面）。
+          [SUPPORT]: "export class SavedTodos {}\n",
+          // 中身の違反（禁止語・api のモック・import だけで installAsAppDatabase と RouteFetch.install を呼ばない・操作して保存先を
+          //   読まない step）と、対の欠け（.feature と step の無い画面）。
           [`${SCREENS}/y-screen/y-screen.tsx`]: "",
           [`${SCREENS}/z-screen/z-screen.tsx`]: "",
-          [`${SCREENS}/z-screen/z-screen.feature`]: source(
+          [`${SPEC_DIR}/z-screen.feature`]: source(
             ...GOOD_FEATURE,
             "    * DB に残る",
           ),
-          [`${SCREENS}/z-screen/z-screen.screen-spec.test.tsx`]: source(
+          [`${SPEC_DIR}/z-screen.screen-spec.test.tsx`]: source(
             ...GOOD_STEPS.filter((line) => !line.startsWith("beforeAll(")).map(
               (line) => line.replaceAll("x-screen", "z-screen"),
             ),
             'vi.mock("@/features/todo/api/todo-api");',
+            'import { SavedTodos } from "./support";',
+            'And("追加すると一覧に出る", async () => {',
+            "  await user.click(addButton());",
+            "});",
           ),
+          // 置き場所の違反: frontend の直下と画面のディレクトリの .feature、spec の下のほかの名前のソース。
           "apps/frontend_customer/x.feature": "Feature: x\n",
+          [`${SCREEN_DIR}/x-screen.feature`]: "Feature: x\n",
+          [`${SPEC_DIR}/helper.ts`]: "export class Helper {}\n",
           // 対象外: 画面の隣のテスト・hook、依存・ビルドの出力の中、frontend の外。
           [`${SCREEN_DIR}/x-screen.test.tsx`]: "",
           [`${SCREEN_DIR}/x-screen.hook.ts`]: "",
@@ -1266,21 +1619,27 @@ describeFeature(feature, ({ Scenario }) => {
         expect(result).toEqual({
           files: [
             `${SCREENS}/x-screen/x-screen.feature`,
-            `${SCREENS}/x-screen/x-screen.screen-spec.test.tsx`,
             `${SCREENS}/x-screen/x-screen.tsx`,
             `${SCREENS}/y-screen/y-screen.tsx`,
-            `${SCREENS}/z-screen/z-screen.feature`,
-            `${SCREENS}/z-screen/z-screen.screen-spec.test.tsx`,
             `${SCREENS}/z-screen/z-screen.tsx`,
+            `${SPEC_DIR}/helper.ts`,
+            `${SPEC_DIR}/support.ts`,
+            `${SPEC_DIR}/x-screen.feature`,
+            `${SPEC_DIR}/x-screen.screen-spec.test.tsx`,
+            `${SPEC_DIR}/z-screen.feature`,
+            `${SPEC_DIR}/z-screen.screen-spec.test.tsx`,
             "apps/frontend_customer/x.feature",
           ],
           violations: [
-            `screen-spec-pair: ${SCREENS}/y-screen/y-screen.tsx（y-screen.feature が無い）`,
-            `screen-spec-pair: ${SCREENS}/y-screen/y-screen.tsx（y-screen.screen-spec.test.tsx が無い）`,
-            `screen-spec-business-language: ${SCREENS}/z-screen/z-screen.feature:10`,
-            `screen-spec-mock-only-navigation: ${SCREENS}/z-screen/z-screen.screen-spec.test.tsx:8`,
-            `screen-spec-uses-real-database: ${SCREENS}/z-screen/z-screen.screen-spec.test.tsx（installAsAppDatabase() を呼んでいない）`,
-            `screen-spec-uses-route-fetch: ${SCREENS}/z-screen/z-screen.screen-spec.test.tsx（RouteFetch.install() を呼んでいない）`,
+            `screen-spec-placement: ${SCREENS}/x-screen/x-screen.feature`,
+            `screen-spec-pair: ${SCREENS}/y-screen/y-screen.tsx（${SPEC_DIR}/y-screen.feature が無い）`,
+            `screen-spec-pair: ${SCREENS}/y-screen/y-screen.tsx（${SPEC_DIR}/y-screen.screen-spec.test.tsx が無い）`,
+            `screen-spec-placement: ${SPEC_DIR}/helper.ts`,
+            `screen-spec-business-language: ${SPEC_DIR}/z-screen.feature:10`,
+            `screen-spec-mock-only-navigation: ${SPEC_DIR}/z-screen.screen-spec.test.tsx:8`,
+            `screen-spec-operation-reads-saved: ${SPEC_DIR}/z-screen.screen-spec.test.tsx:10`,
+            `screen-spec-uses-real-database: ${SPEC_DIR}/z-screen.screen-spec.test.tsx（installAsAppDatabase() を呼んでいない）`,
+            `screen-spec-uses-route-fetch: ${SPEC_DIR}/z-screen.screen-spec.test.tsx（RouteFetch.install() を呼んでいない）`,
             "screen-spec-placement: apps/frontend_customer/x.feature",
           ],
         });
@@ -1307,7 +1666,7 @@ describeFeature(feature, ({ Scenario }) => {
 
   Scenario("画面仕様（実ファイル）", ({ And }) => {
     And(
-      "画面ごとに .feature と step の実装の対があり、.feature は固定の見出しと箇条書きの step を業務の言葉だけで書き、step の実装は実 DB と fetch の差し替えを使い、遷移のほかをモックしない",
+      "画面ごとに .feature と step の実装の対があり、.feature は固定の見出しと箇条書きの step を業務の言葉だけで書き、step の実装は実 DB と fetch の差し替えを使い、遷移のほかをモックせず、操作する step は保存先を確かめる",
       () => {
         // given
         // WHY 対象を確かめてから違反 0 件を見る: 列挙が壊れて 0 件になると、違反も 0 件になり常に緑になる。
@@ -1320,11 +1679,12 @@ describeFeature(feature, ({ Scenario }) => {
         expect(files).toEqual(
           expect.arrayContaining([
             `${SCREENS}/todo-screen/todo-screen.tsx`,
-            `${SCREENS}/todo-screen/todo-screen.feature`,
-            `${SCREENS}/todo-screen/todo-screen.screen-spec.test.tsx`,
+            `${SPEC_DIR}/todo-screen.feature`,
+            `${SPEC_DIR}/todo-screen.screen-spec.test.tsx`,
             `${SCREENS}/todo-detail-screen/todo-detail-screen.tsx`,
-            `${SCREENS}/todo-detail-screen/todo-detail-screen.feature`,
-            `${SCREENS}/todo-detail-screen/todo-detail-screen.screen-spec.test.tsx`,
+            `${SPEC_DIR}/todo-detail-screen.feature`,
+            `${SPEC_DIR}/todo-detail-screen.screen-spec.test.tsx`,
+            `${SPEC_DIR}/support.ts`,
           ]),
         );
         expect(violations).toEqual([]);

@@ -4,6 +4,7 @@ paths:
   - "**/*.test.tsx"
   - "apps/e2e/**"
   - "apps/backend/spec/**"
+  - "apps/frontend_customer/spec/**"
   - "rule-tests/**"
   - "vitest.config.mts"
   - "vitest.global-setup.ts"
@@ -32,7 +33,7 @@ paths:
 - テストを足す・書き換えたら、守るコードを 1 度壊して（条件の反転・戻り値の変更・呼び出しの削除）落ちることを確かめ、戻す。WHY: 検証が弱いと壊しても緑のまま。
 
 ## 置き方と環境
-対象と同じディレクトリに `<対象>.test.ts(x)`（`apps/frontend_customer/app/` には置かない）。仕様は `apps/backend/spec/`、E2E は `apps/e2e/spec/`。
+対象と同じディレクトリに `<対象>.test.ts(x)`（`apps/frontend_customer/app/` には置かない）。仕様は `apps/backend/spec/` と `apps/frontend_customer/spec/`、E2E は `apps/e2e/spec/`。
 
 | カテゴリ | 対象 | 方法 | 環境 |
 | --- | --- | --- | --- |
@@ -46,7 +47,7 @@ paths:
 | Shared UT | `apps/shared/` | 純粋な単体テスト（一時ディレクトリの `.env`・`console` の spy・`Clock.now` の `vi.mock`） | Node |
 | Frontend UT | `apps/frontend_customer/features/**/*.hook.ts` | `renderHook` で状態とイベント | jsdom |
 | Frontend UT | `apps/frontend_customer/features/**/*-screen.tsx` | render して操作し、表示を検証（画面仕様で起こせないものだけ） | jsdom |
-| Frontend 仕様 | `apps/frontend_customer/features/<f>/screens/<name>/<name>.screen-spec.test.tsx` | 画面を render し、fetch を Route Handler の直接の呼び出しに替えて実 Postgres まで通す（下の「画面仕様」） | jsdom |
+| Frontend 仕様 | `apps/frontend_customer/spec/screen/<f>/<name>.screen-spec.test.tsx` | 画面を render し、fetch を Route Handler の直接の呼び出しに替えて実 Postgres まで通す（下の「画面仕様」） | jsdom |
 | E2E | `apps/e2e/spec/<name>.feature` と `<name>.steps.ts` | Playwright で本番ビルドを起動し、Chromium で操作（下の「E2E」） | Chromium |
 
 - `apps/backend/`・`apps/shared/` のテストは先頭に `// @vitest-environment node`（既定は jsdom）。
@@ -55,7 +56,7 @@ paths:
 
 ## カバレッジ（100%）
 - `pnpm test`（`vitest run --coverage`）は Statements / Branches / Functions / Lines のどれかが 100% 未満なら失敗する（CI でも）。速く回すなら `pnpm test:unit`、完了前は必ず `pnpm test`。設定と WHY は `vitest.config.mts`。
-- 計測対象: `apps/frontend_customer/` の `features/`・`shared/`・`test-support/`、`apps/backend/`、`apps/shared/`、`scripts/`（`.ts` / `.tsx` / `.mjs`。テスト・`*.d.ts`・`apps/backend/` 直下の `*.config.ts` を除く）。
+- 計測対象: `apps/frontend_customer/` の `features/`・`shared/`・`test-support/`・`spec/`、`apps/backend/`、`apps/shared/`、`scripts/`（`.ts` / `.tsx` / `.mjs`。テスト・`*.d.ts`・`apps/backend/` 直下の `*.config.ts` を除く）。
 - 計測しない: `apps/frontend_customer/app/`・`proxy.ts`・`instrumentation*.ts`（結線・起動だけ。中身は別のテスト、結線は E2E）、設定ファイル、`.sh`（V8 は JS しか測れない）。
 - 足りなければテストを足す（`/* v8 ignore */` で逃がさない）。対象外を増やすときは上の方針に合うか確かめ、`vitest.config.mts` とここに理由を書く。
 
@@ -148,19 +149,19 @@ Entity の業務ルール（不変条件・用語・規則の理由）を `<name
 - `.feature`: `Feature:` → `Rule:` → `Scenario:` → `*`（各 Scenario に 1 つ以上）。`Feature:` と各 `Rule:` の直後に説明の行（仕様メモ。用語と規則の理由）を 1 行以上（`domain-spec-structure`）。`#` のコメントは開発者向けで仕様メモと混ぜない。キーワードはこの 4 つだけで、タグ・`# language:` は使わない（`domain-spec-keyword` / `domain-spec-tag`）。禁止語は API ジャーニーと同じ（`domain-spec-business-language`）。WHY 仕様メモ: 規則だけでは「なぜ」が読めない。
 - step の実装: `loadFeature("./<name>.feature")`（第 2 引数なし）を `describeFeature` に渡し、skip・タグの絞り込みを使わない（`domain-spec-load-feature`）。同じ feature の `internal/domain/` を相対パスで値として import し、InMemory と `test-support/database` は使わない（`domain-spec-pure`）。`Rule` → `RuleScenario` → `And`（`*`）で書き、step 1 つで前提から検証まで完結させる。時計は `Clock.now` の `vi.mock`。Stryker の実行に含まれる。
 
-## 画面仕様（features/<f>/screens/<name>）
+## 画面仕様（spec/screen）
 画面 1 つの表示・操作・異常系を `<name>.feature` に業務の言葉で書き、`<name>.screen-spec.test.tsx` が本物の画面・hook・`api/` と、`app/api` の Route Handler・backend・実 Postgres を通して確かめる。画面の単体テスト・hook のテストも残す。検査は `rule-tests/screen-spec.test.ts`（WHY と限界はその冒頭）。決定は ADR `docs/adr/quality/20261004-screen-spec-with-real-api.md`。
-- 置き場所: 画面のディレクトリ（`features/<f>/screens/<name>/`）の直下に `<name>.feature` と `<name>.screen-spec.test.tsx`。画面ごとに対を置く（`screen-spec-placement` / `screen-spec-pair`）。
+- 置き場所: 画面（`features/<f>/screens/<name>/<name>.tsx`）ごとに、`apps/frontend_customer/spec/screen/<f>/` の直下に `<name>.feature` と `<name>.screen-spec.test.tsx` の対を置く。step が共有する補助は同じ場所の `support.ts`（`.tsx` も）だけで、`spec/` の下にほかのファイルを置かない（`screen-spec-placement` / `screen-spec-pair`）。WHY: backend の API 仕様（`spec/api/<feature>/`）と同じ形にし、人が読む仕様を `spec/` の下で拾い読みできる。
 - `.feature`: `Feature:` の下に `Scenario:` を `表示項目` → `インタラクション` → `異常系` の順に 1 回ずつ（該当が無くても省かない。`screen-spec-scenario-*`）。step は `*` だけ（1 行 = 1 振る舞い = 1 テスト）。キーワード・タグ・禁止語は API 仕様と同じ（`screen-spec-keyword` / `screen-spec-tag` / `screen-spec-business-language`）。
   - `表示項目`: 保存された内容で変わる表示（並び・状態・書式・リンク先・空のとき・読み込み中）。決まった文言（見出し・ボタンの名前）は書かない（画面の単体テストが見る）。WHY: 仕様は「何が出るか」で、文言の言い回しは辞書の都合。機械化: 縛れない（静的な文言かは字句で決まらない）。
   - `インタラクション`: クリック・入力と送信・画面のギミック（前後の空白・再読み込みしない など）のすべてと、その後に保存される内容と画面の変化。
   - `異常系`: 失敗の起こし方（長すぎる入力・ほかで削除された・壊れた行）と、そのときに出るもの・保存が変わらないこと。
 - step の実装:
   - `beforeAll` で `TestDatabase.create()`・`migrate()`・`installAsAppDatabase()`、`RouteFetch.install()`（route.ts は最初のリクエストで読み込まれるので、`installAsAppDatabase()` を先に呼ぶ）。`afterAll` で `restore()` と `close()`。各テストの前に画面を片付け、表を `TRUNCATE`。前提の行はテストデータビルダーで入れる。
-  - 書き込みの操作の後は、画面の変化と保存された行（`database.pool.query` など）の両方を確かめる。WHY: 画面が正しくても保存がずれる誤りを見逃さない。
+  - 利用者の操作（userEvent の `click` / `type` / `clear` / `paste` など・`fireEvent`）をする step は、同じ step の中で保存された行を読み、その結果を `expect` に直接渡す（`await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([...])`）。行を読む補助は `support.ts` に置き、名前を `Saved` で始める。書き込みが起きる操作では変わった後の行を、起きないはずの操作（空白だけ・長すぎる・送っても再読み込みしない・ほかで削除された など）でも行が変わっていないことを確かめる（`screen-spec-operation-reads-saved`）。WHY: 画面に出ただけでは、キャッシュの書き換えだけで保存されていない誤りを見逃す。限界: 操作を補助の関数の中で呼ぶと操作に数えず、`Saved…` が実際に保存先を読んでいるか・比べ方は見ない（reviewer が見る）。
   - モックは `next/navigation` だけ。遷移はリンクの `href` で確かめる（`next/link` のクリックは `next/navigation` を通らない）。feature の `api/` の `<x>-api` と `*.in-memory` は import しない（`screen-spec-no-feature-api` / `screen-spec-no-in-memory`）。`test-support/database` と `test-support/route-fetch` を値で import し、`.installAsAppDatabase(` と `RouteFetch.install(` を呼ぶ（呼び忘れると開発用 DB の `public` の表に書き込むため。`screen-spec-uses-real-database` / `screen-spec-uses-route-fetch`）。
   - `loadFeature("./<name>.feature")`（第 2 引数なし）で読み、skip・タグの絞り込みを使わない（`screen-spec-load-feature` / `screen-spec-no-skip`）。
-  - backend の `test-support/database` とテストデータビルダーは相対パス（`../../../../../backend/test-support/...`）で import する（`exports` に test-support を載せない。Biome の例外は `.claude/rules/quality/lint.md`）。
+  - backend の `test-support/database` とテストデータビルダーは相対パス（`../../../../backend/test-support/...`）で import する（`exports` に test-support を載せない。Biome の例外は `.claude/rules/quality/lint.md`）。画面の辞書は `@/features/<f>/screens/<name>/<name>.messages` で import する。
 - `pnpm test` の実行に含まれる。
 
 ## mutation testing（Stryker）

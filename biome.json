@@ -194,7 +194,7 @@
     },
     {
       "includes": [
-        "apps/frontend_customer/features/*/screens/*/*.screen-spec.test.tsx"
+        "apps/frontend_customer/spec/screen/*/*.screen-spec.test.tsx"
       ],
       "linter": {
         "rules": {
@@ -208,8 +208,8 @@
                       "..",
                       "../*",
                       "../**",
-                      "!../../../../../backend/test-support/database",
-                      "!../../../../../backend/test-support/*/*-builder"
+                      "!../../../../backend/test-support/database",
+                      "!../../../../backend/test-support/*/*-builder"
                     ],
                     "message": "画面仕様の step で ../ を使ってよいのは backend の test-support/database とテストデータビルダーだけ（.claude/rules/quality/lint.md の overrides）。ほかは @/<path> で書く。"
                   }

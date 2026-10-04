@@ -27,9 +27,10 @@ import { casesByName } from "./case-table";
 //   - dockerignore-entry: .dockerignore に `**/test-support` の行が無い（前後の空白を除いた行が完全一致。コメントアウト・
 //     末尾の / 付き・別のパターンは認めない）。
 //   - dockerignore-excludes: apps/*/test-support/ の下のファイル（再帰）と、test-support を import する apps/ の下のテスト（*.test.*）と、
-//     apps/backend/spec/ の下のファイル（API 仕様 spec/api/ と API ジャーニー spec/journey/。`.feature`・step・support.ts。Issue #219 /
-//     #251）のうち、.dockerignore のパターンで除外されないもの。WHY spec も外す: API 仕様の support.ts はテストでない名前のソースで
-//     vitest を import する（テストだけが使うコード）。.feature も人が読む仕様でイメージに要らない（.dockerignore の `**/spec`）。
+//     apps/ の下の spec/ の下のファイル（backend の API 仕様 spec/api/ と API ジャーニー spec/journey/、frontend の画面仕様
+//     spec/screen/。`.feature`・step・support。Issue #219 / #251 / #456）のうち、.dockerignore のパターンで除外されないもの。
+//     WHY spec も外す: API 仕様・画面仕様の support はテストでない名前のソースで、テストだけが使うコード。.feature も人が読む仕様で
+//     イメージに要らない（.dockerignore の `**/spec`）。
 //     WHY (a) と別に持つ: 行があっても、後ろの `!` の行（`!apps/backend/test-support/x.ts` など）で戻されると入る。行の有無だけでなく、
 //     実際のファイルが除外されることを確かめる。
 //     WHY test-support を import するテストも: test-support を外してもテストがコンテキストに残ると、next build の型チェック
@@ -88,8 +89,8 @@ type RuleId =
 const repoRoot = join(import.meta.dirname, "..");
 
 const TEST_SUPPORT_DIR = "test-support";
-// 人が読む仕様（apps/backend/spec/。API 仕様 spec/api/ と API ジャーニー spec/journey/。Issue #219 / #251）。テストだけが使う
-//   コードなので、test-support と同じくイメージに入れない。
+// 人が読む仕様（apps/backend/spec/ の API 仕様 spec/api/ と API ジャーニー spec/journey/、apps/frontend_customer/spec/ の画面仕様
+//   spec/screen/。Issue #219 / #251 / #456）。テストだけが使うコードなので、test-support と同じくイメージに入れない。
 const SPEC_DIR = "spec";
 const DOCKERIGNORE_ENTRY = `**/${TEST_SUPPORT_DIR}`;
 
@@ -1541,6 +1542,16 @@ describeFeature(feature, ({ Scenario }) => {
         );
         expect(files).toContain(
           "apps/backend/spec/journey/todo-lifecycle.feature",
+        );
+        // Issue #456: 画面仕様（.feature・step・support.ts）も同じ **/spec で外す。
+        expect(files).toContain(
+          "apps/frontend_customer/spec/screen/todo/support.ts",
+        );
+        expect(files).toContain(
+          "apps/frontend_customer/spec/screen/todo/todo-screen.feature",
+        );
+        expect(files).toContain(
+          "apps/frontend_customer/spec/screen/todo/todo-screen.screen-spec.test.tsx",
         );
         expect(violations["dockerignore-excludes"]).toEqual([]);
       },

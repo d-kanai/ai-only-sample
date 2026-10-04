@@ -873,17 +873,17 @@ describeFeature(feature, ({ Scenario }) => {
         },
       );
 
-      // 画面仕様の step（features/<f>/screens/<name>/<name>.screen-spec.test.tsx）の例外: 実 DB の準備（backend の test-support/database）と
+      // 画面仕様の step（spec/screen/<f>/<name>.screen-spec.test.tsx）の例外: 実 DB の準備（backend の test-support/database）と
       //   前提の行を入れるテストデータビルダー（backend の test-support/<feature>/<名前>-builder）だけは、../ で読む。
       //   WHY: どちらも backend の exports に載せない（rule-tests/test-support.test.ts の exports-test-support）ので @repo/backend/ では
       //   解決できず、@/ は frontend の中だけを指す。例外は biome.json の 2 つ目の override で、この 2 つの参照先と画面仕様の置き場所に絞る。
       And(
-        "画面仕様の step だけは backend の test-support/database とテストデータビルダーへの ../ が 0 で終わり、ほかの ../（backend の別のファイル・frontend の中・ビルダーでない test-support）と、ほかのテスト・置き場所の違う画面仕様の同じ import は非 0 で終わる",
+        "画面仕様の step だけは backend の test-support/database とテストデータビルダーへの ../ が 0 で終わり、ほかの ../（backend の別のファイル・frontend の中・ビルダーでない test-support）と、ほかのテスト・support・置き場所の違う画面仕様の同じ import は非 0 で終わる",
         () => {
           // given
           const spec =
-            "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.screen-spec.test.tsx";
-          const backend = "../../../../../backend";
+            "apps/frontend_customer/spec/screen/todo/todo-screen.screen-spec.test.tsx";
+          const backend = "../../../../backend";
           const allowed: [string, string][] = [
             [spec, `${backend}/test-support/database`],
             [spec, `${backend}/test-support/todo/todo-builder`],
@@ -892,18 +892,26 @@ describeFeature(feature, ({ Scenario }) => {
             [spec, `${backend}/shared/drizzle/database`],
             [spec, `${backend}/test-support/todo/todo-repository.in-memory`],
             [spec, `${backend}/test-support/database-x`],
-            [spec, "../todo-detail-screen/todo-detail-screen.messages"],
             [
-              "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.test.tsx",
+              spec,
+              "../../../features/todo/screens/todo-screen/todo-screen.messages",
+            ],
+            [spec, "../other/support"],
+            [
+              "apps/frontend_customer/spec/screen/todo/support.ts",
               `${backend}/test-support/database`,
             ],
             [
-              "apps/frontend_customer/features/todo/screens/todo-screen/nested/todo-screen.screen-spec.test.tsx",
+              "apps/frontend_customer/spec/screen/todo/todo-screen.test.tsx",
               `${backend}/test-support/database`,
             ],
             [
-              "apps/frontend_customer/features/todo/todo-screen.screen-spec.test.tsx",
-              `${backend}/test-support/database`,
+              "apps/frontend_customer/spec/screen/todo/nested/todo-screen.screen-spec.test.tsx",
+              `../${backend}/test-support/database`,
+            ],
+            [
+              "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.screen-spec.test.tsx",
+              `../${backend}/test-support/database`,
             ],
           ];
           const lines = (specifier: string) => [

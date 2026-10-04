@@ -41,7 +41,7 @@ import { casesByName } from "./case-table";
 //     apps/backend/test-support/<feature>/ の直下のテストデータビルダーのテスト（*-builder.test.ts。Issue #240）、
 //     apps/backend/spec/journey/ の直下の API ジャーニーテスト（*.api-journey.test.ts。Issue #187 / #200）、
 //     apps/backend/spec/api/<feature>/ の直下の API 仕様テスト（*.api-spec.test.ts。Issue #219）、
-//     apps/frontend_customer/features/<f>/screens/<name>/ の画面仕様の step（<name>.screen-spec.test.tsx。Issue #456）、
+//     apps/frontend_customer/spec/screen/<f>/ の直下の画面仕様の step（<name>.screen-spec.test.tsx。Issue #456）、
 //     vitest.global-setup.ts だけ。application / presentation / domain のテスト・frontend のほかのテストからの import は違反。
 //     参照先は書き方によらず解決して比べる（相対パスは参照元のディレクトリから、`@repo/backend/…` は apps/backend/、`@/…` は
 //     apps/frontend_customer/。拡張子は除く）。WHY: 書き方（`../../../test-support/database`・`@repo/backend/test-support/database`・
@@ -54,7 +54,7 @@ import { casesByName } from "./case-table";
 //     WHY API 仕様テストは許す（Issue #219）: API 1 つの振る舞いを実 Postgres で本番の組み立てを通して確かめる人が読む仕様で、
 //       置き場所（apps/backend/spec/api/<feature>/）で単体テストと分けている。形は rule-tests/api-spec.test.ts が見る。
 //     WHY 画面仕様の step は許す（Issue #456）: 画面 → api/ → Route Handler → backend → 実 Postgres を通して画面の振る舞いを確かめる
-//       人が読む仕様で、名前（.screen-spec）と置き場所（画面のディレクトリ）で画面・hook の単体テストと分けている。形（実 DB と
+//       人が読む仕様で、名前（.screen-spec）と置き場所（apps/frontend_customer/spec/screen/<f>/）で画面・hook の単体テストと分けている。形（実 DB と
 //       fetch の差し替えを使うこと・遷移のほかをモックしないこと）は rule-tests/screen-spec.test.ts が見る。
 //     WHY import type も違反: 型だけでも DB の準備を前提にしたテストの形が application / presentation に入り込む入口になる。
 // 検査の対象: apps/ の下のテストファイル（*.test.ts / *.test.tsx）と、リポジトリ直下の vitest.global-setup.ts。
@@ -147,9 +147,10 @@ const TEST_DATABASE_MODULE = "apps/backend/test-support/database";
 // WHY apps/backend/spec/api/<feature>/ の直下の *.api-spec.test.ts も許す（Issue #219）: API 仕様テストは API 1 つの振る舞いを実 Postgres
 //   で本番の組み立てを通して確かめる。名前に .api-spec の無いテスト（spec/api/x/y.test.ts）・spec/api/ の直下や入れ子・spec/api/ の外
 //   （presentation の隣）は通さない。置き場所と形は rule-tests/api-spec.test.ts が見る。
-// WHY apps/frontend_customer/features/<f>/screens/<name>/<name>.screen-spec.test.tsx も許す（Issue #456）: 画面仕様は画面の操作を
-//   実 Postgres まで通して確かめる。画面のディレクトリと名前の違うもの（screens/<name>/<別名>.screen-spec.test.tsx）・screens/ の外・
-//   画面のテスト（*-screen.test.tsx）は通さない（画面の単体テストに DB を持ち込ませない）。形は rule-tests/screen-spec.test.ts が見る。
+// WHY apps/frontend_customer/spec/screen/<f>/<name>.screen-spec.test.tsx も許す（Issue #456）: 画面仕様は画面の操作を
+//   実 Postgres まで通して確かめる。画面のディレクトリ（features/<f>/screens/<name>/）・spec/screen/ の直下や入れ子・名前に
+//   .screen-spec の無いテスト（画面の *-screen.test.tsx など）は通さない（画面の単体テストに DB を持ち込ませない）。置き場所と形は
+//   rule-tests/screen-spec.test.ts が見る。
 function mayImportTestDatabase(path: string): boolean {
   return (
     path === "vitest.global-setup.ts" ||
@@ -161,7 +162,7 @@ function mayImportTestDatabase(path: string): boolean {
     ) ||
     /^apps\/backend\/spec\/journey\/[^/]+\.api-journey\.test\.ts$/.test(path) ||
     /^apps\/backend\/spec\/api\/[^/]+\/[^/]+\.api-spec\.test\.ts$/.test(path) ||
-    /^apps\/frontend_customer\/features\/[^/]+\/screens\/([^/]+)\/\1\.screen-spec\.test\.tsx$/.test(
+    /^apps\/frontend_customer\/spec\/screen\/[^/]+\/[^/]+\.screen-spec\.test\.tsx$/.test(
       path,
     )
   );
@@ -455,10 +456,10 @@ describeFeature(feature, ({ Scenario }) => {
               ),
             ],
             [
-              "画面仕様の step から ../../../../../backend/test-support/database を import（Issue #456）",
-              "apps/frontend_customer/features/x/screens/x-screen/x-screen.screen-spec.test.tsx",
+              "画面仕様の step から ../../../../backend/test-support/database を import（Issue #456）",
+              "apps/frontend_customer/spec/screen/x/x-screen.screen-spec.test.tsx",
               source(
-                'import { TestDatabase } from "../../../../../backend/test-support/database";',
+                'import { TestDatabase } from "../../../../backend/test-support/database";',
               ),
             ],
             [
@@ -849,16 +850,32 @@ describeFeature(feature, ({ Scenario }) => {
               [{ rule: "db-tests-in-infra-only", line: 1 }],
             ],
             [
-              "画面のディレクトリと名前の違う画面仕様の step から import（screens/<name>/<name>.screen-spec.test.tsx だけ）",
-              "apps/frontend_customer/features/x/screens/x-screen/y-screen.screen-spec.test.tsx",
+              "画面のディレクトリに置いた画面仕様の step から import（spec/screen/<f>/ の直下だけ）",
+              "apps/frontend_customer/features/x/screens/x-screen/x-screen.screen-spec.test.tsx",
               source(
                 'import { TestDatabase } from "../../../../../backend/test-support/database";',
               ),
               [{ rule: "db-tests-in-infra-only", line: 1 }],
             ],
             [
-              "screens/ の外の画面仕様の step から import",
-              "apps/frontend_customer/features/x/x-screen/x-screen.screen-spec.test.tsx",
+              "spec/screen/ の直下の画面仕様の step から import",
+              "apps/frontend_customer/spec/screen/x-screen.screen-spec.test.tsx",
+              source(
+                'import { TestDatabase } from "../../../backend/test-support/database";',
+              ),
+              [{ rule: "db-tests-in-infra-only", line: 1 }],
+            ],
+            [
+              "spec/screen/<f>/ の入れ子の画面仕様の step から import",
+              "apps/frontend_customer/spec/screen/x/nested/x-screen.screen-spec.test.tsx",
+              source(
+                'import { TestDatabase } from "../../../../../backend/test-support/database";',
+              ),
+              [{ rule: "db-tests-in-infra-only", line: 1 }],
+            ],
+            [
+              "spec/screen/<f>/ の画面仕様でないテストから import",
+              "apps/frontend_customer/spec/screen/x/x-screen.test.tsx",
               source(
                 'import { TestDatabase } from "../../../../backend/test-support/database";',
               ),
@@ -970,9 +987,9 @@ describeFeature(feature, ({ Scenario }) => {
           "apps/frontend_customer/features/x/x-screen.test.tsx": source(
             'import { a } from "../../../backend/test-support/database";',
           ),
-          "apps/frontend_customer/features/x/screens/x-screen/x-screen.screen-spec.test.tsx":
+          "apps/frontend_customer/spec/screen/x/x-screen.screen-spec.test.tsx":
             source(
-              'import { a } from "../../../../../backend/test-support/database";',
+              'import { a } from "../../../../backend/test-support/database";',
             ),
           "apps/shared/logger.test.ts": source('vi.mock("./now");'),
           // 対象外: テストでないファイル（backend のソース・テスト基盤・spec）、node_modules と . で始まるディレクトリの中。
@@ -1008,9 +1025,9 @@ describeFeature(feature, ({ Scenario }) => {
             "apps/backend/spec/journey/x.api-journey.test.ts",
             "apps/backend/spec/journey/y.test.ts",
             "apps/backend/test-support/database.test.ts",
-            "apps/frontend_customer/features/x/screens/x-screen/x-screen.screen-spec.test.tsx",
             "apps/frontend_customer/features/x/x-screen.test.tsx",
             "apps/frontend_customer/features/x/x.hook.test.ts",
+            "apps/frontend_customer/spec/screen/x/x-screen.screen-spec.test.tsx",
             "apps/shared/logger.test.ts",
             "vitest.global-setup.ts",
           ],

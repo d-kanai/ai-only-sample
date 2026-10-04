@@ -957,7 +957,7 @@ describeFeature(feature, ({ Scenario }) => {
             "apps/backend/features/todo/internal/domain/todo.test.ts",
             "apps/backend/spec/api/todo/create-todo.api-spec.test.ts",
             "apps/backend/spec/domain/todo/todo.domain-spec.test.ts",
-            "apps/frontend_customer/features/todo/screens/todo-screen/todo-screen.screen-spec.test.tsx",
+            "apps/frontend_customer/spec/screen/todo/todo-screen.screen-spec.test.tsx",
             "rule-tests/architecture.test.ts",
           ]),
         );

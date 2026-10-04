@@ -4,17 +4,18 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 import { TodoDetailScreen } from "@/features/todo";
+import { todoDetailScreenMessages } from "@/features/todo/screens/todo-detail-screen/todo-detail-screen.messages";
 import { commonMessages } from "@/shared/i18n/common.messages";
 import { tJa } from "@/test-support/i18n";
 import { RouteFetch } from "@/test-support/route-fetch";
 import { ScreenSpecProviders } from "@/test-support/screen-spec";
-import { TestDatabase } from "../../../../../backend/test-support/database";
-import { TodoBuilder } from "../../../../../backend/test-support/todo/todo-builder";
-import { todoDetailScreenMessages } from "./todo-detail-screen.messages";
+import { TestDatabase } from "../../../../backend/test-support/database";
+import { TodoBuilder } from "../../../../backend/test-support/todo/todo-builder";
+import { SavedTodos } from "./support";
 
 // 画面仕様（.claude/rules/quality/testing.md の「画面仕様」）: todo-detail-screen.feature の `*` の step を、本物の画面・hook・api/ と、
 //   route.ts を通した本番の handler・実 Postgres（テスト用のスキーマ）で確かめる。WHY（モックを使わない・遷移はリンクの行き先で
-//   確かめる・書き込みは保存された行と画面の両方で見る・前提はテストデータビルダー）は todo-screen.screen-spec.test.tsx の冒頭と同じ。
+//   確かめる・操作する step はすべて保存された行を確かめる・前提はテストデータビルダー）は todo-screen.screen-spec.test.tsx の冒頭と同じ。
 
 let database: TestDatabase;
 let routeFetch: RouteFetch;
@@ -38,15 +39,6 @@ beforeEach(async () => {
   cleanup();
   await database.pool.query("truncate change_logs, todo_status_changes, todos");
 });
-
-type SavedTodo = { title: string; completed: boolean };
-
-async function savedTodos(): Promise<SavedTodo[]> {
-  const { rows } = await database.pool.query<SavedTodo>(
-    "select title, completed from todos order by created_at, id",
-  );
-  return rows;
-}
 
 // 別の画面（別のタブ）で削除した状態を作る。完了の履歴は外部キーの cascade で消える。
 async function removeElsewhere(id: string): Promise<void> {
@@ -181,7 +173,7 @@ describeFeature(feature, ({ Scenario }) => {
 
       // then
       expect(title).toBeDefined();
-      await expect(savedTodos()).resolves.toEqual([
+      await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
         { title: "豆乳を買う", completed: false },
       ]);
     });
@@ -204,7 +196,7 @@ describeFeature(feature, ({ Scenario }) => {
 
         // then
         await waitFor(() => expect(input.value).toBe("豆乳を買う"));
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "豆乳を買う", completed: false },
         ]);
       },
@@ -227,7 +219,7 @@ describeFeature(feature, ({ Scenario }) => {
         await settle();
 
         // then
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: false },
         ]);
         expect(screen.queryByRole("alert")).toBeNull();
@@ -264,6 +256,9 @@ describeFeature(feature, ({ Scenario }) => {
         expect(submitted.map((event) => event.defaultPrevented)).toEqual([
           true,
         ]);
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
+          { title: "豆乳を買う", completed: false },
+        ]);
       },
     );
 
@@ -282,7 +277,7 @@ describeFeature(feature, ({ Scenario }) => {
 
         // then
         expect(checked.checked).toBe(true);
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: true },
         ]);
       },
@@ -304,7 +299,7 @@ describeFeature(feature, ({ Scenario }) => {
 
         // then
         expect(unchecked.checked).toBe(false);
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: false },
         ]);
       },
@@ -327,7 +322,7 @@ describeFeature(feature, ({ Scenario }) => {
         await completionCheckbox(true);
 
         // then
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: true },
         ]);
         expect(
@@ -411,7 +406,7 @@ describeFeature(feature, ({ Scenario }) => {
         expect(invalid.getAttribute("aria-invalid")).toBe("true");
         expect((invalid as HTMLInputElement).value).toBe(tooLong);
         expect(screen.queryByRole("alert")).toBeNull();
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: false },
         ]);
       },
@@ -437,6 +432,7 @@ describeFeature(feature, ({ Scenario }) => {
           tJa(commonMessages, "todo.notFound", { id: milk.id }),
         );
         expect(input.getAttribute("aria-invalid")).toBeNull();
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([]);
       },
     );
 
@@ -459,7 +455,7 @@ describeFeature(feature, ({ Scenario }) => {
         expect(alert.textContent).toBe(
           tJa(commonMessages, "todo.notFound", { id: milk.id }),
         );
-        await expect(savedTodos()).resolves.toEqual([]);
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([]);
       },
     );
   });

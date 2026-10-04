@@ -1409,6 +1409,13 @@ const BACKEND_PLACEMENT = {
 //   test-support/ と同じく、本番のコードから参照しないこと・イメージに入らないことは rule-tests/test-support.test.ts が見る。
 const FRONTEND_SOURCE_DIR =
   /^apps\/frontend_customer\/(?:app|features|shared|test-support)\//;
+// Issue #456: 画面仕様（apps/frontend_customer/spec/screen/<f>/ の <name>.feature と <name>.screen-spec.test.tsx）の step が共有する補助。
+// WHY support.ts だけを許す: backend の API 仕様の support.ts（BACKEND_API_SPECS_SUPPORT）と同じく、step の間で共有する補助（保存先の
+//   行を読む Saved… など）の置き場所で、テストだけが使う。名前を support の 1 つに固定し（rule-tests/screen-spec.test.ts の
+//   screen-spec-placement と同じ）、spec/ を層に属さないコードの置き場所にさせない。.tsx も許すのは、補助が JSX を書く（wrapper など）
+//   ときのため。spec/screen/ の直下・入れ子・ほかの名前は違反。
+const FRONTEND_SCREEN_SPECS_SUPPORT =
+  /^apps\/frontend_customer\/spec\/screen\/[^/]+\/support\.tsx?$/;
 const FRONTEND_ROOT_FILES = new Set([
   "apps/frontend_customer/next.config.ts",
   "apps/frontend_customer/instrumentation.ts",
@@ -1419,10 +1426,11 @@ const FRONTEND_ROOT_FILES = new Set([
 
 const FRONTEND_PLACEMENT = {
   id: "frontend-placement",
-  name: "apps/frontend_customer/ のソースファイルは app/・features/・shared/・test-support/ の下か、直下の next.config.ts・instrumentation.ts・instrumentation-node.ts・proxy.ts・next-env.d.ts だけに置く",
+  name: "apps/frontend_customer/ のソースファイルは app/・features/・shared/・test-support/ の下か、画面仕様の補助 spec/screen/<f>/support.ts（.tsx も）か、直下の next.config.ts・instrumentation.ts・instrumentation-node.ts・proxy.ts・next-env.d.ts だけに置く",
   isMisplaced: (file: string) =>
     isUnder(file, FRONTEND_ROOT) &&
     !FRONTEND_SOURCE_DIR.test(file) &&
+    !FRONTEND_SCREEN_SPECS_SUPPORT.test(file) &&
     !FRONTEND_ROOT_FILES.has(file),
 };
 
@@ -5538,6 +5546,15 @@ const FRONTEND_PLACEMENT_EXAMPLES: { misplaced: string[]; placed: string[] } = {
     "apps/frontend_customer/test-support-x/i18n.tsx",
     "apps/frontend_customer/my-test-support/i18n.tsx",
     "apps/frontend_customer/test-support.tsx",
+    // Issue #456: 画面仕様の補助は spec/screen/<f>/ の直下の support.ts（.tsx も）だけ。直下・入れ子・ほかの名前・前方一致だけの別の
+    //   ディレクトリ・別の拡張子は違反。
+    "apps/frontend_customer/spec/screen/support.ts",
+    "apps/frontend_customer/spec/screen/todo/helper.ts",
+    "apps/frontend_customer/spec/screen/todo/nested/support.ts",
+    "apps/frontend_customer/spec/screen/todo/support.js",
+    "apps/frontend_customer/spec/screen-x/todo/support.ts",
+    "apps/frontend_customer/spec-x/screen/todo/support.ts",
+    "apps/frontend_customer/spec/x.ts",
   ],
   placed: [
     "apps/frontend_customer/app/page.tsx",
@@ -5547,6 +5564,9 @@ const FRONTEND_PLACEMENT_EXAMPLES: { misplaced: string[]; placed: string[] } = {
     // Issue #181: テストだけが使うコードの置き場所。
     "apps/frontend_customer/test-support/i18n.tsx",
     "apps/frontend_customer/test-support/nested/x.ts",
+    // Issue #456: 画面仕様（spec/screen/<f>/）の step が共有する補助。
+    "apps/frontend_customer/spec/screen/todo/support.ts",
+    "apps/frontend_customer/spec/screen/todo/support.tsx",
     "apps/frontend_customer/next.config.ts",
     "apps/frontend_customer/instrumentation.ts",
     "apps/frontend_customer/instrumentation-node.ts",
@@ -6979,7 +6999,7 @@ const APP_DATABASE_SWAP_EXAMPLES: {
       "AppDatabase.use(handle); AppDatabase.release();",
     ],
     [
-      "apps/frontend_customer/features/todo/screens/todo/todo.screen-spec.test.tsx",
+      "apps/frontend_customer/spec/screen/todo/todo-screen.screen-spec.test.tsx",
       "AppDatabase.use(handle); AppDatabase.release();",
     ],
     // 対象外: apps/e2e（別プロセスのサーバを外から操作する）と scripts/。

@@ -9,13 +9,14 @@ import {
 import { userEvent } from "@testing-library/user-event";
 import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 import { TodoScreen } from "@/features/todo";
+import { todoScreenMessages } from "@/features/todo/screens/todo-screen/todo-screen.messages";
 import { commonMessages } from "@/shared/i18n/common.messages";
 import { tJa } from "@/test-support/i18n";
 import { RouteFetch } from "@/test-support/route-fetch";
 import { ScreenSpecProviders } from "@/test-support/screen-spec";
-import { TestDatabase } from "../../../../../backend/test-support/database";
-import { TodoBuilder } from "../../../../../backend/test-support/todo/todo-builder";
-import { todoScreenMessages } from "./todo-screen.messages";
+import { TestDatabase } from "../../../../backend/test-support/database";
+import { TodoBuilder } from "../../../../backend/test-support/todo/todo-builder";
+import { SavedTodos } from "./support";
 
 // 画面仕様（.claude/rules/quality/testing.md の「画面仕様」）: todo-screen.feature の `*` の step を、本物の画面・hook・api/ と、
 //   route.ts を通した本番の handler・実 Postgres（テスト用のスキーマ）で確かめる。差し替えるのはネットワークだけ
@@ -26,8 +27,10 @@ import { todoScreenMessages } from "./todo-screen.messages";
 // WHY 遷移はリンクの行き先（href）で確かめる: 画面は next/link のリンクで遷移し、useRouter を使わない。next/link のクリックは
 //   Next のルーターの本体（app-router-instance）を呼び、next/navigation のモックでは捕まえられない（next 16.3.6 の
 //   dist/client/app-dir/link.js）。遷移先の画面は、その画面の画面仕様が確かめる。
-// WHY 書き込みは保存された行と画面の両方で確かめる: 画面は書き込みの後に一覧を取り直すので、画面に出たことは保存の結果でもあるが、
-//   どの値が保存されたか（前後の空白・完了かどうか）は行を読まないと分からない。
+// WHY 操作する step はすべて保存された行を確かめる（support.ts の SavedTodos。rule-tests/screen-spec.test.ts の
+//   screen-spec-operation-reads-saved）: 画面に出ただけでは、キャッシュの書き換えだけで保存されていない誤りを見逃す。どの値が
+//   保存されたか（前後の空白・完了かどうか）も行を読まないと分からない。書き込みが起きないはずの操作（空白だけ・長すぎる・ほかで
+//   削除された）でも、行が変わっていないことを確かめる。
 // 前提の Todo は backend のテストデータビルダー（TodoBuilder）で表に直接入れる（API を通さない。理由は todo-builder.ts の冒頭）。
 
 let database: TestDatabase;
@@ -54,15 +57,7 @@ beforeEach(async () => {
   await database.pool.query("truncate change_logs, todo_status_changes, todos");
 });
 
-type SavedTodo = { title: string; completed: boolean };
-
-// 保存された Todo（一覧と同じ、作成日時の古い順）。
-async function savedTodos(): Promise<SavedTodo[]> {
-  const { rows } = await database.pool.query<SavedTodo>(
-    "select title, completed from todos order by created_at, id",
-  );
-  return rows;
-}
+type ListedTodo = { title: string; completed: boolean };
 
 // 別の画面（別のタブ）で削除した状態を作る。完了の履歴は外部キーの cascade で消える。
 async function removeElsewhere(id: string): Promise<void> {
@@ -100,7 +95,7 @@ function deleteButton(title: string): Promise<HTMLElement> {
 }
 
 // 一覧の行を、タイトルと完了のチェックの組で読む。
-function listedTodos(): SavedTodo[] {
+function listedTodos(): ListedTodo[] {
   return within(screen.getByRole("list"))
     .getAllByRole("listitem")
     .map((item) => ({
@@ -243,7 +238,7 @@ describeFeature(feature, ({ Scenario }) => {
         await screen.findByRole("link", { name: "牛乳を買う" });
 
         // then
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: false },
         ]);
         expect(titleInput().value).toBe("");
@@ -261,7 +256,7 @@ describeFeature(feature, ({ Scenario }) => {
       await screen.findByRole("link", { name: "牛乳を買う" });
 
       // then
-      await expect(savedTodos()).resolves.toEqual([
+      await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
         { title: "牛乳を買う", completed: false },
       ]);
     });
@@ -279,7 +274,7 @@ describeFeature(feature, ({ Scenario }) => {
         await settle();
 
         // then
-        await expect(savedTodos()).resolves.toEqual([]);
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([]);
         expect(screen.queryByRole("alert")).toBeNull();
         expect(titleInput().getAttribute("aria-invalid")).toBeNull();
       },
@@ -304,6 +299,9 @@ describeFeature(feature, ({ Scenario }) => {
 
       // then
       expect(submitted.map((event) => event.defaultPrevented)).toEqual([true]);
+      await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
+        { title: "牛乳を買う", completed: false },
+      ]);
     });
 
     And(
@@ -322,7 +320,7 @@ describeFeature(feature, ({ Scenario }) => {
 
         // then
         expect(checked).toBeDefined();
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: true },
         ]);
       },
@@ -351,7 +349,7 @@ describeFeature(feature, ({ Scenario }) => {
 
         // then
         expect(unchecked).toBeDefined();
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "牛乳を買う", completed: false },
         ]);
       },
@@ -381,7 +379,7 @@ describeFeature(feature, ({ Scenario }) => {
         expect(listedTodos()).toEqual([
           { title: "パンを買う", completed: false },
         ]);
-        await expect(savedTodos()).resolves.toEqual([
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([
           { title: "パンを買う", completed: false },
         ]);
       },
@@ -410,7 +408,7 @@ describeFeature(feature, ({ Scenario }) => {
         expect(input.getAttribute("aria-invalid")).toBe("true");
         expect((input as HTMLInputElement).value).toBe(tooLong);
         expect(screen.queryByRole("alert")).toBeNull();
-        await expect(savedTodos()).resolves.toEqual([]);
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([]);
       },
     );
 
@@ -459,6 +457,7 @@ describeFeature(feature, ({ Scenario }) => {
         expect(alert.textContent).toBe(
           tJa(commonMessages, "todo.notFound", { id: milk.id }),
         );
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([]);
       },
     );
 
@@ -481,7 +480,7 @@ describeFeature(feature, ({ Scenario }) => {
         expect(alert.textContent).toBe(
           tJa(commonMessages, "todo.notFound", { id: milk.id }),
         );
-        await expect(savedTodos()).resolves.toEqual([]);
+        await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([]);
       },
     );
   });

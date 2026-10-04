@@ -20,7 +20,7 @@ Feature: Biome と Lefthook
   Scenario: biome check の noRestrictedImports は apps/frontend_customer の ../ の import を拒否する（Issue #340）
     * apps/frontend_customer で ../ を指す import・export は非 0 で終わり、noRestrictedImports が出力される（../ と ../../・.. と ../ だけ・import type・export from と全部の re-export・dynamic import()・副作用だけの import・拡張子付き・.tsx と app/ とテスト）
     * apps/frontend_customer の ./・@/・パッケージ（react・next/link・@repo/shared/logger）の import と、コメントと文字列の中の ../ は 0 で終わる
-    * 画面仕様の step だけは backend の test-support/database とテストデータビルダーへの ../ が 0 で終わり、ほかの ../（backend の別のファイル・frontend の中・ビルダーでない test-support）と、ほかのテスト・置き場所の違う画面仕様の同じ import は非 0 で終わる
+    * 画面仕様の step だけは backend の test-support/database とテストデータビルダーへの ../ が 0 で終わり、ほかの ../（backend の別のファイル・frontend の中・ビルダーでない test-support）と、ほかのテスト・support・置き場所の違う画面仕様の同じ import は非 0 で終わる
     * apps/frontend_customer の外の ../ の import は 0 で終わる（backend と e2e は相対パスを使う・前方一致だけが同じ別ディレクトリ・リポジトリ直下）
   Scenario: biome check は本番コードの関数の行数・引数の数・ファイルの行数・1 ファイルのクラス数を縛り、テストは対象外にする（Issue #384）
     * 本番コードで 51 行の関数・引数 5 個の関数・301 行のファイル・クラス 2 つのファイルは非 0 で終わり、noExcessiveLinesPerFunction・useMaxParams・noExcessiveLinesPerFile・noExcessiveClassesPerFile が出力される（backend・shared・frontend の .ts と .tsx と hook・前方一致だけがテストの置き場所と同じ別ディレクトリ・リポジトリ直下）
