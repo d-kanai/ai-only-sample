@@ -12,6 +12,7 @@
     "test:e2e": "pnpm --filter @repo/e2e --fail-if-no-match test",
     "test:mutation": "stryker run",
     "lint": "biome check --error-on-warnings .",
+    "work-logs:html": "node scripts/work-log-html.mjs",
     "typecheck": "tsc -p . --noEmit && tsc -p apps/backend --noEmit && tsc -p apps/shared --noEmit",
     "format": "biome format --write .",
     "check": "biome check --write --error-on-warnings .",

@@ -1,9 +1,12 @@
 # 作業ログ（常時）
 
-コードに残らない行動（設定変更・調査・判断）を `docs/work-logs/YYYY-MM-DD.md`（1 日 1 ファイル）に記録する。
+コードに残らない行動（設定変更・調査・判断）を `docs/work-logs/YYYY-MM-DD/<ブランチ名の / を - にしたもの>.md`（1 日 1 ディレクトリ、1 ブランチ 1 ファイル。例 `docs/work-logs/2026-10-03/claude-work-log-conflicts-pdpuc7.md`）に記録する。
+
+- WHY ブランチごと: 1 日 1 ファイルでは、どの PR も同じファイルの末尾に追記して、1 本マージされるたびに残りの PR が競合し、CI も auto-merge も止まった（Issue #441）。`YYYY-MM-DD.md` の 1 日 1 ファイルは過去の記録で、新しくは書かない（フックと CI が通さない）。
+- 読むとき: `pnpm work-logs:html` が日付ごとに全ブランチ（と過去の 1 日 1 ファイル）をまとめた HTML を `dist/work-logs.html` に作る（コミットしない。まとめたファイルをコミットすると、また競合するため）。
 
 - タイミング: タスクを終えるたび。調査・質問への回答だけで終わった場合も、回答を返す前に書く（実装が無いと区切りが無く漏れやすい）。
-- 強制: Stop フック `scripts/hooks/require-work-log.sh`（ツールを使ったターンで今日のログが変わっていなければ停止を拒否）と、CI の `scripts/hooks/check-work-logs-diff.sh`（PR の差分に `docs/work-logs/*.md` が無ければ失敗）。どちらも、追加した項目に `- 機械化:` の行が無ければ止める（Issue #178。仕様と限界は `.claude/rules/tooling/work-log-hooks.md`）。
+- 強制: Stop フック `scripts/hooks/require-work-log.sh`（ツールを使ったターンで今日のブランチのログが変わっていなければ停止を拒否）と、CI の `scripts/hooks/check-work-logs-diff.sh`（PR の差分にそのブランチのログが無ければ失敗）。どちらも、追加した項目に `- 機械化:` の行が無ければ止める（Issue #178。仕様と限界は `.claude/rules/tooling/work-log-hooks.md`）。
 - 記録対象（後で同じ調査を繰り返したり、背景を知らずにデグレしたりしないため）:
   - 一次情報で裏どりした事実（公式の制約・実測した挙動・版や公開日）。情報源の URL か確認したコマンドを書く。
   - 比較検討の結論（何と何を比べ、何を選び、なぜか。採用しなかった案も 1 行）。
