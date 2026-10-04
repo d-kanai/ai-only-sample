@@ -134,17 +134,100 @@ afterAll(() => {
   rmSync(staticOnlyClassDir, { recursive: true, force: true });
 });
 
-function checkAt(path: string, lines: string[]) {
-  const file = join(staticOnlyClassDir, path);
+function checkAt(path: string, lines: string[], dir = staticOnlyClassDir) {
+  const file = join(dir, path);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, [...lines, ""].join("\n"));
   const result = spawnSync(
     join(repoRoot, "node_modules/.bin/biome"),
     ["check", ERROR_ON_WARNINGS, path],
-    { cwd: staticOnlyClassDir, encoding: "utf8" },
+    { cwd: dir, encoding: "utf8" },
   );
   return { status: result.status, output: result.stdout + result.stderr };
 }
+
+// nursery/useReactCompiler（Issue #451）の一時ディレクトリ。置き方は noStaticOnlyClass と同じ（リポジトリの biome.json と .gitignore）に、
+//   React 19 を宣言した package.json を足す。
+// WHY package.json を置く: useReactCompiler は「いちばん近い package.json が React 19 以上を宣言している」ときだけ動き、無ければ黙って
+//   何も見ない（Biome 2.5.13 のルールの説明。2026-10-04 に、package.json が無いと render 中の props の書き換えでも 0 で終わることを実測）。
+//   本物の apps/frontend_customer/package.json を写し、frontend が React を下げた・外したときもこの検査が実物に合わせて変わるようにする。
+// WHY リポジトリ直下（一時ディレクトリの直下）にも同じ package.json を置く: 外の場所で 0 になる理由を override の範囲だけにするため。
+//   置かないと、backend やリポジトリ直下では React の宣言が無いことで 0 になり、override を全体の linter に広げても must pass が緑のまま。
+//   別の一時ディレクトリにするのは、noStaticOnlyClass などの検査を package.json のある状態に変えないため。
+let reactCompilerDir: string;
+
+beforeAll(() => {
+  reactCompilerDir = mkdtempSync(join(tmpdir(), "lint-react-compiler-"));
+  copyFileSync(
+    join(repoRoot, "biome.json"),
+    join(reactCompilerDir, "biome.json"),
+  );
+  writeFileSync(
+    join(reactCompilerDir, ".gitignore"),
+    "# lint.test.ts の一時ディレクトリ\n",
+  );
+  const frontendPackageJson = join(
+    repoRoot,
+    "apps/frontend_customer/package.json",
+  );
+  mkdirSync(join(reactCompilerDir, "apps/frontend_customer"), {
+    recursive: true,
+  });
+  copyFileSync(
+    frontendPackageJson,
+    join(reactCompilerDir, "apps/frontend_customer/package.json"),
+  );
+  copyFileSync(frontendPackageJson, join(reactCompilerDir, "package.json"));
+});
+
+afterAll(() => {
+  rmSync(reactCompilerDir, { recursive: true, force: true });
+});
+
+// 出力に出たルール名（lint/<group>/<rule>）を重ねずに並べる。WHY: useReactCompiler 以外の違反の巻き添えで非 0 になっていないことを
+//   toEqual で確かめるため（違反を単独で含むファイルにする）。
+function lintRulesIn(output: string): string[] {
+  return [...new Set(output.match(/lint\/\w+\/\w+/g) ?? [])].sort();
+}
+
+// React Compiler が最適化を諦める書き方（Biome 2.5.13 で useReactCompiler が検出することを 2026-10-04 に実測したもの）。
+//   hook が引数のオブジェクトを書き換える書き方は検出されなかったので入れていない（.claude/rules/quality/lint.md の限界）。
+const MUTATE_PROPS_COMPONENT = [
+  "export function Item(props: { item: { label: string } }) {",
+  '  props.item.label = "x";',
+  "  return <p>{props.item.label}</p>;",
+  "}",
+];
+
+const REF_IN_RENDER_COMPONENT = [
+  'import { useRef } from "react";',
+  "",
+  "export function Counter() {",
+  "  const renders = useRef(0);",
+  "  renders.current = renders.current + 1;",
+  "  return <p>{renders.current}</p>;",
+  "}",
+];
+
+const REF_IN_RENDER_HOOK = [
+  'import { useRef } from "react";',
+  "",
+  "export function useRenders() {",
+  "  const renders = useRef(0);",
+  "  renders.current = renders.current + 1;",
+  "  return renders.current;",
+  "}",
+];
+
+const SET_STATE_IN_RENDER_HOOK = [
+  'import { useState } from "react";',
+  "",
+  "export function useLoop() {",
+  "  const [value, setValue] = useState(0);",
+  "  setValue(1);",
+  "  return value;",
+  "}",
+];
 
 const STATIC_ONLY_CLASS = [
   "export class Paths {",
@@ -900,6 +983,130 @@ describeFeature(feature, ({ Scenario }) => {
             // then
             expect(status, `${path}\n${output}`).toBe(0);
           }
+        },
+      );
+    },
+  );
+
+  // nursery/useReactCompiler（Issue #451）: apps/frontend_customer/** の override だけで error にする。WHY は
+  //   .claude/rules/quality/lint.md の「recommended 外で追加したルール」と ADR docs/adr/quality/20261004-react-compiler-lint-with-biome.md。
+  // 一時ディレクトリの置き方は reactCompilerDir の前のコメント。
+  Scenario(
+    "biome check の useReactCompiler は apps/frontend_customer で React Compiler が最適化できない書き方を拒否する（Issue #451）",
+    ({ And }) => {
+      And(
+        "apps/frontend_customer の component と hook で、render 中に props を書き換える・ref.current を読み書きする・state を更新すると非 0 で終わり、useReactCompiler だけが出力される（features と shared と app/・.tsx と .hook.ts）",
+        () => {
+          // given
+          const cases: [string, string, string[]][] = [
+            [
+              "component が render 中に props を書き換える",
+              "apps/frontend_customer/features/todo/components/item.tsx",
+              MUTATE_PROPS_COMPONENT,
+            ],
+            [
+              "component が render 中に ref.current を読み書きする",
+              "apps/frontend_customer/shared/ui/x/counter.tsx",
+              REF_IN_RENDER_COMPONENT,
+            ],
+            [
+              "app/ の page が render 中に props を書き換える",
+              "apps/frontend_customer/app/todos/page.tsx",
+              MUTATE_PROPS_COMPONENT,
+            ],
+            [
+              "hook が render 中に ref.current を読み書きする",
+              "apps/frontend_customer/features/todo/screens/x/renders.hook.ts",
+              REF_IN_RENDER_HOOK,
+            ],
+            [
+              "hook が render 中に state を更新する",
+              "apps/frontend_customer/features/todo/screens/x/loop.hook.ts",
+              SET_STATE_IN_RENDER_HOOK,
+            ],
+          ];
+
+          // when
+          const results = casesByName(cases, ([, path, lines]) => {
+            const { status, output } = checkAt(path, lines, reactCompilerDir);
+            return { failed: status !== 0, rules: lintRulesIn(output) };
+          });
+
+          // then
+          expect(results).toEqual(
+            casesByName(cases, () => ({
+              failed: true,
+              rules: ["lint/nursery/useReactCompiler"],
+            })),
+          );
+        },
+      );
+
+      And(
+        "apps/frontend_customer の外では同じ書き方でも 0 で終わる（backend・前方一致だけが同じ別ディレクトリ・リポジトリ直下。どれも React 19 の package.json の下に置く）",
+        () => {
+          // given
+          const cases: [string, string, string[]][] = [
+            [
+              "backend の component",
+              "apps/backend/features/todo/internal/presentation/item.tsx",
+              MUTATE_PROPS_COMPONENT,
+            ],
+            [
+              "backend の hook",
+              "apps/backend/shared/x/renders.hook.ts",
+              REF_IN_RENDER_HOOK,
+            ],
+            [
+              "名前の前方一致だけが同じ別ディレクトリ",
+              "apps/frontend_customer-x/features/todo/components/item.tsx",
+              MUTATE_PROPS_COMPONENT,
+            ],
+            ["リポジトリ直下", "item.tsx", MUTATE_PROPS_COMPONENT],
+          ];
+
+          // when
+          const results = casesByName(cases, ([, path, lines]) => {
+            const { status, output } = checkAt(path, lines, reactCompilerDir);
+            return { status, rules: lintRulesIn(output) };
+          });
+
+          // then
+          expect(results).toEqual(
+            casesByName(cases, () => ({ status: 0, rules: [] })),
+          );
+        },
+      );
+
+      And(
+        "apps/frontend_customer で ref と state をイベントハンドラの中で変える書き方は 0 で終わる",
+        () => {
+          // given
+          const path = "apps/frontend_customer/features/todo/components/ok.tsx";
+          const lines = [
+            'import { useRef, useState } from "react";',
+            "",
+            "export function Counter(props: { item: { label: string } }) {",
+            "  const [value, setValue] = useState(0);",
+            "  const clicks = useRef(0);",
+            "  const onClick = () => {",
+            "    clicks.current = clicks.current + 1;",
+            "    setValue(value + 1);",
+            "  };",
+            "  return (",
+            '    <button type="button" onClick={onClick}>',
+            "      {props.item.label}",
+            "      {value}",
+            "    </button>",
+            "  );",
+            "}",
+          ];
+
+          // when
+          const { status, output } = checkAt(path, lines, reactCompilerDir);
+
+          // then
+          expect(status, output).toBe(0);
         },
       );
     },
