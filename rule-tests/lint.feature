@@ -25,6 +25,10 @@ Feature: Biome と Lefthook
     * 本番コードで 51 行の関数・引数 5 個の関数・301 行のファイル・クラス 2 つのファイルは非 0 で終わり、noExcessiveLinesPerFunction・useMaxParams・noExcessiveLinesPerFile・noExcessiveClassesPerFile が出力される（backend・shared・frontend の .ts と .tsx と hook・前方一致だけがテストの置き場所と同じ別ディレクトリ・リポジトリ直下）
     * 本番コードでも 50 行の関数・引数 4 個の関数・300 行のファイル・クラス 1 つのファイルは 0 で終わる
     * テスト（x.test.ts・x.test.tsx・rule-tests・apps/e2e・backend の spec と test-support・frontend の test-support）では 51 行の関数・引数 5 個の関数・301 行のファイル・クラス 2 つのファイルでも 0 で終わる
+  Scenario: biome check の useReactCompiler は apps/frontend_customer で React Compiler が最適化できない書き方を拒否する（Issue #451）
+    * apps/frontend_customer の component と hook で、render 中に props を書き換える・ref.current を読み書きする・state を更新すると非 0 で終わり、useReactCompiler だけが出力される（features と shared と app/・.tsx と .hook.ts）
+    * apps/frontend_customer の外では同じ書き方でも 0 で終わる（backend・前方一致だけが同じ別ディレクトリ・リポジトリ直下。どれも React 19 の package.json の下に置く）
+    * apps/frontend_customer で ref と state をイベントハンドラの中で変える書き方は 0 で終わる
   Scenario: --error-on-warnings 付きの biome check かの判定（runsBiomeCheckWithErrorOnWarnings）
     * --error-on-warnings 付きの biome check は許可する（フラグの位置・--write・pnpm exec と lefthook の引数・&& でつなぐ）
     * --error-on-warnings が無い・check でない・別のコマンドの引数・npx・失敗を打ち消すつなぎ・warn を効かなくするフラグ・空文字は拒否する（||・;・改行・|・&・--diagnostic-level・--only・--skip）
