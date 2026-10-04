@@ -110,6 +110,8 @@ export default defineConfig({
       //   テストだけが使うコード（apps/backend/test-support/・apps/frontend_customer/test-support/。Issue #181）も対象にする。
       //   WHY: テストの前提を作るコード（テスト用の DB・翻訳の期待値）も仕様で、分岐が通らないまま残すとテストの前提が崩れても気づけない。
       //   apps/backend/test-support/ は apps/backend/ の全体に含まれるので、frontend の分だけを足す。
+      //   画面仕様の補助（apps/frontend_customer/spec/screen/<f>/support.ts。Issue #456）も同じ理由で対象にする（backend の API 仕様の
+      //   support.ts は apps/backend/ の全体に含まれる）。
       //   scripts/ の .mjs（scripts/hooks/work-log-sections.mjs。Issue #178）も対象にする。WHY: シェルスクリプトから node で呼ぶ
       //   判定のロジックで、テストが import して計測できる。"scripts/**/*.ts" だけでは .mjs が拾われない（2026-09-30 に
       //   json-summary で確認）。
@@ -117,6 +119,7 @@ export default defineConfig({
         "apps/frontend_customer/features/**/*.{ts,tsx}",
         "apps/frontend_customer/shared/**/*.{ts,tsx}",
         "apps/frontend_customer/test-support/**/*.{ts,tsx}",
+        "apps/frontend_customer/spec/**/*.{ts,tsx}",
         "apps/backend/**/*.{ts,tsx}",
         "apps/shared/**/*.ts",
         "scripts/**/*.ts",

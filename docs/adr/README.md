@@ -102,6 +102,8 @@ ADR は分類ごとのディレクトリに置く。分類は次の 4 つだけ�
 | 2026-10-02 | migrate ジョブはアプリの runtime イメージをコマンド違いで動かし、マイグレーションは drizzle-orm の migrator を束ねた入口で当てる | 採用 | [20261002-migrate-job-same-runtime-image.md](tech-stack/20261002-migrate-job-same-runtime-image.md) |
 | 2026-10-03 | 依存の自動更新は Renovate（GitHub App）で行い、Dependabot は使わない | 採用 | [20261003-renovate-for-dependency-updates.md](tech-stack/20261003-renovate-for-dependency-updates.md) |
 | 2026-10-03 | Renovate の patch / minor の更新は CI が緑なら自動マージし、メジャーと Next.js / React は人が確かめる | 採用 | [20261003-renovate-automerge-patch-minor.md](tech-stack/20261003-renovate-automerge-patch-minor.md) |
+| 2026-10-03 | frontend のデータ取得は TanStack Query、フォームは React Hook Form + zod にし、React Compiler で手の memo をやめる | 採用 | [20261003-tanstack-query-react-hook-form-react-compiler.md](tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md) |
+| 2026-10-03 | frontend の画面をまたぐクライアントだけの状態は zustand で持ち、store は stores/ の下にだけ置く | 採用 | [20261003-zustand-for-client-shared-state.md](tech-stack/20261003-zustand-for-client-shared-state.md) |
 
 ### quality/
 品質ゲートとテストの方針
@@ -130,6 +132,8 @@ ADR は分類ごとのディレクトリに置く。分類は次の 4 つだけ�
 | 2026-10-03 | 動いているアプリのセキュリティの検査は、E2E を ZAP のプロキシ経由で流し、受け身の検査の警告で CI を落とす | 置き換え（→ quality/20261003-zap-daily-active-scan.md） | [20261003-zap-passive-scan-via-e2e.md](quality/20261003-zap-passive-scan-via-e2e.md) |
 | 2026-10-03 | ZAP の検査は PR の CI から外し、main の日次で E2E を通した受け身の検査と active scan を流す | 採用 | [20261003-zap-daily-active-scan.md](quality/20261003-zap-daily-active-scan.md) |
 | 2026-10-03 | CSP は単体テストで CSP Evaluator に評価させ、すべての応答に CORP と COEP を足す | 採用 | [20261003-csp-evaluator-and-cross-origin-isolation.md](quality/20261003-csp-evaluator-and-cross-origin-isolation.md) |
+| 2026-10-04 | React Compiler が最適化できない書き方は、Biome の nursery/useReactCompiler で frontend だけ止める | 採用 | [20261004-react-compiler-lint-with-biome.md](quality/20261004-react-compiler-lint-with-biome.md) |
+| 2026-10-04 | 画面ごとに画面仕様の .feature を置き、step は fetch だけを Route Handler の呼び出しに替えて実 Postgres まで通す | 採用 | [20261004-screen-spec-with-real-api.md](quality/20261004-screen-spec-with-real-api.md) |
 
 ### workflow/
 開発プロセス・環境・AI エージェントの運用
@@ -155,5 +159,7 @@ ADR は分類ごとのディレクトリに置く。分類は次の 4 つだけ�
 | 2026-10-02 | .claude/rules/code の規則はカテゴリ・WHAT・WHY・強制の 4 列の表で書き、何が止めるかを行ごとに示す | 採用 | [20261002-code-rules-as-tables.md](workflow/20261002-code-rules-as-tables.md) |
 | 2026-10-02 | rule-review は PR を作った後に回し、結果を PR のレビュー（行コメントとまとめ）に残してから直す | 採用 | [20261002-rule-review-results-on-pr.md](workflow/20261002-rule-review-results-on-pr.md) |
 | 2026-10-02 | main に前回のレビュー以降に入った差分を、GitHub Actions の Claude Code で日次セキュリティレビューする | 置き換え（→ workflow/20261003-security-review-opus-file-by-file.md） | [20261002-daily-security-review-in-actions.md](workflow/20261002-daily-security-review-in-actions.md) |
+| 2026-10-03 | 作業ログは日付のディレクトリの下にブランチごとのファイルで書き、PR どうしの追記の競合をなくす | 採用 | [20261003-work-log-file-per-branch.md](workflow/20261003-work-log-file-per-branch.md) |
 | 2026-10-03 | 日次セキュリティレビューは Opus で、変更ファイルを 1 つずつ読ませ、読んでいないファイルを出す | 採用 | [20261003-security-review-opus-file-by-file.md](workflow/20261003-security-review-opus-file-by-file.md) |
 | 2026-10-03 | ヘルスチェックは DB まで見る 1 本の GET /api/health にし、停止は Next.js の標準のシグナル処理に任せる | 採用 | [20261003-health-check-and-shutdown.md](architecture/20261003-health-check-and-shutdown.md) |
+| 2026-10-03 | ドメイン機能の開発は 4 種の .feature に仕様を書き、整合性を確かめてから TDD で実装する | 採用 | [20261003-spec-first-feature-development.md](workflow/20261003-spec-first-feature-development.md) |

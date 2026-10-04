@@ -480,23 +480,6 @@ describe("useT（画面のロケールで、渡した辞書を翻訳する t）"
     expect(before).toBe("Save");
     expect(result.current("back")).toBe("Back to list");
   });
-
-  // WHY 同じ関数を返す: t を useEffect / useCallback の依存に入れても、描画のたびに作り直されないようにする。
-  test("ロケールと辞書が変わらなければ、再描画しても同じ t を返す", () => {
-    // given
-    const { result, rerender } = renderWithLocale(
-      (messages: typeof testMessages) => useT(messages),
-      "ja",
-      testMessages,
-    );
-    const first = result.current;
-
-    // when
-    rerender("ja", testMessages);
-
-    // then
-    expect(result.current).toBe(first);
-  });
 });
 
 describe("LocaleProvider", () => {

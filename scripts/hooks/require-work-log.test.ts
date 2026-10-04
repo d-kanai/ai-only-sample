@@ -15,7 +15,8 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Stop フック（scripts/hooks/require-work-log.sh）の仕様。Issue #64。
-// このターンでツールを使ったのに、その日の作業ログ（docs/work-logs/<今日>.md）が作業ツリーでも今日のコミットでも変わっていなければ、
+// このターンでツールを使ったのに、その日のブランチの作業ログ（docs/work-logs/<今日>/<ブランチ名の / を - にしたもの>.md。Issue #441）が
+// 作業ツリーでもこのターンのコミットでも変わっていなければ、
 // {"decision":"block"} で停止を拒否する。WHY と限界は .claude/rules/tooling/work-log-hooks.md。
 
 const scriptPath = resolve(import.meta.dirname, "require-work-log.sh");
@@ -41,7 +42,9 @@ const turnStart = new Date(now.getTime() - 60_000);
 // このターンより前だが今日（通常は）のコミットの日時。git の raw 形式（<unix 秒> <タイムゾーン>）で渡す。
 // 限界: 0 時の直後 2 分以内に実行すると昨日の日付になるが、その場合も期待値（拒否）は同じ。
 const beforeTurnGitDate = `${Math.floor(turnStart.getTime() / 1000) - 60} +0000`;
-const todayLog = `docs/work-logs/${today}.md`;
+// テストのリポジトリの作業ブランチ。/ を含む名前にして、ファイル名で - に置き換えることも確かめる。
+const branch = "feat/1-x";
+const todayLog = `docs/work-logs/${today}/feat-1-x.md`;
 
 type Entry = Record<string, unknown>;
 
@@ -233,10 +236,10 @@ describe("require-work-log.sh（Stop フック）", () => {
     // 実行元のタイムゾーンをそのまま渡す（スクリプトの date と、このテストの Date を同じ TZ にするため）。
     if (process.env.TZ !== undefined) gitEnv.TZ = process.env.TZ;
     writeFileSync(join(home, "gitconfig"), "");
-    git(["init", "-q", "-b", "main"]);
+    git(["init", "-q", "-b", branch]);
     writeRepoFile("README.md", "readme\n");
     writeRepoFile(`docs/work-logs/${yesterday}.md`, "# 昨日\n");
-    // 最初のコミットは昨日の日付にする（今日のコミットに docs/work-logs/<今日>.md が無い状態から始める）。
+    // 最初のコミットは昨日の日付にする（今日のコミットに docs/work-logs/<今日>/<ブランチ>.md が無い状態から始める）。
     const yesterdayDate = `${yesterday}T12:00:00`;
     commit("init", {
       GIT_AUTHOR_DATE: yesterdayDate,
@@ -287,7 +290,7 @@ describe("require-work-log.sh（Stop フック）", () => {
 
     it("このターンに別のファイルだけをコミットした（ログはコミットしていない）なら拒否する", () => {
       // given
-      // コミット側の判定は docs/work-logs/<今日>.md に絞る（-- "$log"）。絞らないと、このターンのどのコミットでも通ってしまう。
+      // コミット側の判定は docs/work-logs/<今日>/<ブランチ>.md に絞る（-- "$log"）。絞らないと、このターンのどのコミットでも通ってしまう。
       writeTranscript(turnWithTool());
       writeRepoFile("src.ts", "x\n");
       commit("code");
@@ -353,7 +356,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       expectBlocked(result);
     });
 
-    it("ツールを使ったのに docs/work-logs/<今日>.md が作業ツリーでもコミットでも変わっていなければ、block と理由を返す", () => {
+    it("ツールを使ったのに docs/work-logs/<今日>/<ブランチ>.md が作業ツリーでもコミットでも変わっていなければ、block と理由を返す", () => {
       // given
       writeTranscript(turnWithTool());
 
@@ -428,7 +431,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       expectBlocked(result);
     });
 
-    it("docs/work-logs/<今日>.md が、今日だが最後の人間のターンより前のコミットでしか変わっていなければ拒否する", () => {
+    it("docs/work-logs/<今日>/<ブランチ>.md が、今日だが最後の人間のターンより前のコミットでしか変わっていなければ拒否する", () => {
       // given
       // 1 日の中で 1 度ログをコミットすると、以後のターンが素通りしていた（Issue #64 の worker の実測で 66 件）。
       writeTranscript(turnWithTool());
@@ -463,7 +466,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       expect(result.stderr).toContain("今日の 0 時を起点にして判定する");
     });
 
-    it("docs/work-logs/<今日>.md が昨日の日付のコミットにしか無ければ拒否する", () => {
+    it("docs/work-logs/<今日>/<ブランチ>.md が昨日の日付のコミットにしか無ければ拒否する", () => {
       // given
       writeTranscript(turnWithTool());
       writeRepoFile(todayLog, "# 今日\n");
@@ -522,7 +525,34 @@ describe("require-work-log.sh（Stop フック）", () => {
       expectBlocked(result);
     });
 
-    it("cwd がリポジトリのサブディレクトリでも、リポジトリ直下の docs/work-logs/<今日>.md で判定する", () => {
+    // WHY 1 日 1 ファイルを must reject に置く: Issue #441 で、どの PR も同じ日のファイルの末尾に追記して PR どうしが競合したので、
+    //   ブランチごとのファイルに分けた。1 日 1 ファイルに書いたログで通すと、競合する書き方に戻るのを見逃す。
+    it("1 日 1 ファイルの docs/work-logs/<今日>.md にこのターンで書いただけなら拒否する", () => {
+      // given
+      writeTranscript(turnWithTool());
+      writeRepoFile(`docs/work-logs/${today}.md`, "# 1 日 1 ファイル\n");
+
+      // when
+      const result = run(stopInput());
+
+      // then
+      expectBlocked(result);
+    });
+
+    it("今日のディレクトリの、別のブランチのファイルにこのターンでコミットしただけなら拒否する", () => {
+      // given
+      writeTranscript(turnWithTool());
+      writeRepoFile(`docs/work-logs/${today}/feat-2-y.md`, "# 別のブランチ\n");
+      commit("other branch log");
+
+      // when
+      const result = run(stopInput());
+
+      // then
+      expectBlocked(result);
+    });
+
+    it("cwd がリポジトリのサブディレクトリでも、リポジトリ直下の docs/work-logs/<今日>/<ブランチ>.md で判定する", () => {
       // given
       writeTranscript(turnWithTool());
       mkdirSync(join(repo, "sub"));
@@ -574,7 +604,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       },
     );
 
-    it("docs/work-logs/<今日>.md が作業ツリーで新しく作られていれば（未追跡）許可する", () => {
+    it("docs/work-logs/<今日>/<ブランチ>.md が作業ツリーで新しく作られていれば（未追跡）許可する", () => {
       // given
       writeTranscript(turnWithTool());
       writeRepoFile(todayLog, "# 今日\n");
@@ -586,7 +616,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       expectAllowed(result);
     });
 
-    it("コミット済みの docs/work-logs/<今日>.md が作業ツリーで変更されていれば許可する", () => {
+    it("コミット済みの docs/work-logs/<今日>/<ブランチ>.md が作業ツリーで変更されていれば許可する", () => {
       // given
       writeTranscript(turnWithTool());
       writeRepoFile(todayLog, "# 今日\n");
@@ -603,7 +633,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       expectAllowed(result);
     });
 
-    it("docs/work-logs/<今日>.md の変更がステージ済みなら許可する", () => {
+    it("docs/work-logs/<今日>/<ブランチ>.md の変更がステージ済みなら許可する", () => {
       // given
       writeTranscript(turnWithTool());
       writeRepoFile(todayLog, "# 今日\n");
@@ -616,7 +646,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       expectAllowed(result);
     });
 
-    it("docs/work-logs/<今日>.md が最後の人間のターン以降のコミットで変更されていれば（作業ツリーはきれいでも）許可する", () => {
+    it("docs/work-logs/<今日>/<ブランチ>.md が最後の人間のターン以降のコミットで変更されていれば（作業ツリーはきれいでも）許可する", () => {
       // given
       writeTranscript(turnWithTool());
       writeRepoFile(todayLog, "# 今日\n");
@@ -671,7 +701,7 @@ describe("require-work-log.sh（Stop フック）", () => {
       expect(result.stderr).toContain("今日の 0 時を起点にして判定する");
     });
 
-    it("cwd がリポジトリのサブディレクトリでも、リポジトリ直下の docs/work-logs/<今日>.md の変更を見て許可する", () => {
+    it("cwd がリポジトリのサブディレクトリでも、リポジトリ直下の docs/work-logs/<今日>/<ブランチ>.md の変更を見て許可する", () => {
       // given
       writeTranscript(turnWithTool());
       mkdirSync(join(repo, "sub"));
@@ -748,6 +778,20 @@ describe("require-work-log.sh（Stop フック）", () => {
       // then
       expectAllowed(result);
       expect(result.stderr).toContain("git リポジトリではない");
+    });
+
+    // WHY 止めない: ログのファイル名をブランチ名から決めるので、ブランチに居ないと書く先を示せない。止め続けると上限（8 回）までループする。
+    it("ブランチに居ない（detached HEAD）なら何もせず、理由を stderr に出す", () => {
+      // given
+      writeTranscript(turnWithTool());
+      git(["checkout", "-q", "--detach"]);
+
+      // when
+      const result = run(stopInput());
+
+      // then
+      expectAllowed(result);
+      expect(result.stderr).toContain("detached HEAD");
     });
 
     it("transcript が読めなければ何もせず、理由を stderr に出す", () => {
@@ -920,7 +964,9 @@ describe("require-work-log.sh（Stop フック）", () => {
       it("このターンのコミットが親の無い最初のコミットでも、空のツリーから比べて拒否する", () => {
         // given
         writeTranscript(turnWithTool());
-        git(["checkout", "-q", "--orphan", "fresh"]);
+        // 同じブランチ名で親の無いブランチを作る（ログのファイル名をブランチ名から決めるため）。
+        git(["branch", "-m", branch, "old"]);
+        git(["checkout", "-q", "--orphan", branch]);
         writeRepoFile(todayLog, log(item("最初のコミット")));
         commit("root");
 

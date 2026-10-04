@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { FeatureFlagProvider } from "@/features/feature-flag";
 import { LocaleProvider } from "@/shared/i18n/i18n";
 import { LOCALE_HEADER, Locales } from "@/shared/i18n/locale";
+import { QueryProvider } from "@/shared/query/query-provider";
 import { NONCE_HEADER } from "@/shared/security/security-headers";
 import {
   DesignSystemHead,
@@ -44,9 +45,13 @@ export default async function RootLayout({
       <body>
         <DesignSystemProvider>
           <LocaleProvider locale={locale}>
-            {/* フィーチャーフラグ（Issue #156）: 全画面が useFeatureFlag でフラグを読めるように包む。provider の準備を待たずに
-                既定値（off）で描き、準備ができたら描き直す（中身と WHY は features/feature-flag/components/feature-flag-provider.tsx）。 */}
-            <FeatureFlagProvider>{children}</FeatureFlagProvider>
+            {/* サーバの状態の取得（TanStack Query。Issue #449）: 全画面の hook が useQuery / useMutation を使えるように包む。
+                QueryClient はクライアントで作る（中身と WHY は shared/query/query-provider.tsx）。 */}
+            <QueryProvider>
+              {/* フィーチャーフラグ（Issue #156）: 全画面が useFeatureFlag でフラグを読めるように包む。provider の準備を待たずに
+                  既定値（off）で描き、準備ができたら描き直す（中身と WHY は features/feature-flag/components/feature-flag-provider.tsx）。 */}
+              <FeatureFlagProvider>{children}</FeatureFlagProvider>
+            </QueryProvider>
           </LocaleProvider>
         </DesignSystemProvider>
       </body>

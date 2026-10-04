@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, type ReactNode, use, useMemo } from "react";
+import { createContext, type ReactNode, use } from "react";
 import { DEFAULT_LOCALE, type Locale } from "./locale";
 
 // 画面の i18n の仕組み（Issue #116 で作り、Issue #125 で 1 ファイルにまとめた）。ライブラリは使わない
@@ -239,9 +239,9 @@ export function useLocale(): Locale {
 // 画面のロケールで、辞書 messages を翻訳する型付きの t。画面の文言はすべてこれを通す（.claude/rules/code/frontend.md の「i18n」）。
 // WHY 辞書を引数で受け取る: 画面・部品ごとの辞書（colocation）のキーだけを受け付ける t にし、別の画面の辞書のキーを
 //   コンパイルエラーにする。
-// WHY useMemo: ロケールと辞書が変わらない限り同じ関数を返し、t を effect や useCallback の依存に入れても作り直しが起きないようにする。
-//   辞書は各 *.messages.ts のモジュールの定数なので、描画のたびには変わらない。
+// WHY useMemo を書かない（Issue #449）: React Compiler（next.config.ts の reactCompiler）がビルドのときに、ロケールと辞書が
+//   変わらない限り同じ t を返すようにメモ化する。手で書くと依存配列の書き間違いを抱える。t を作るのは文字列を引く関数を
+//   1 つ作るだけで、メモ化が無い環境（Vitest は React Compiler を通さない）でも描画のたびに作り直して困ることはない。
 export function useT<M extends Messages>(messages: M): Translate<M> {
-  const locale = useLocale();
-  return useMemo(() => createTranslator(messages, locale), [messages, locale]);
+  return createTranslator(messages, useLocale());
 }

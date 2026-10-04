@@ -5,22 +5,48 @@ AI（Claude Code）が Issue → ブランチ → PR → マージ の流れで�
 
 ## Tech Stack
 
+決定と採用しなかった案は ADR（`docs/adr/tech-stack/`・`docs/adr/architecture/`）。
+
+### 共通
+
 | 領域 | 技術 | 備考 |
 | --- | --- | --- |
 | バージョン管理 | [asdf](https://asdf-vm.com/) | Node.js と pnpm の版を `.tool-versions` で固定し、人間・AI が同じ環境で動かす（`.claude/rules/tooling/env.md`） |
 | ランタイム | [Node.js](https://nodejs.org/) | |
 | パッケージマネージャ | [pnpm](https://pnpm.io/) | npm / yarn は使わない。npm パッケージの版は完全固定（`.claude/rules/tooling/dependencies.md`） |
 | 言語 | [TypeScript](https://www.typescriptlang.org/) | 7 |
-| フレームワーク | [Next.js](https://nextjs.org/) | App Router |
-| UI | [React](https://react.dev/) + [Mantine](https://mantine.dev/) | Mantine を直接使うのは `shared/ui` だけ（`.claude/rules/code/frontend.md`） |
-| フィーチャーフラグ | [OpenFeature](https://openfeature.dev/)（OFREP） | フラグの値は backend に固定で持つ（ADR `docs/adr/architecture/20261002-feature-flag-ofrep-hardcoded.md`） |
-| 入力の検証 | [zod](https://zod.dev/) | backend の入力・環境変数・ログの形の検証 |
-| データベース | [PostgreSQL](https://www.postgresql.org/) | 18。アプリは常に Postgres（InMemory のリポジトリはテスト用） |
-| ORM / マイグレーション | [Drizzle ORM](https://orm.drizzle.team/) + drizzle-kit | 生成した SQL でマイグレーションする（スキル `db-migration`） |
-| DB ドライバ | [node-postgres（pg）](https://node-postgres.com/) | |
+| フレームワーク | [Next.js](https://nextjs.org/) | App Router。画面（`apps/frontend_customer`）と API（Route Handler → `apps/backend`）を 1 つのアプリで動かす |
+| 入力の検証 | [zod](https://zod.dev/) | backend の入力・環境変数・ログの形、frontend のフォームの入力 |
+| ログ・環境変数 | 自前（`apps/shared`） | frontend と backend で共通の基盤（`.claude/rules/code/shared.md`） |
 | コンテナ | [Docker Compose](https://docs.docker.com/compose/) | `compose.yaml` を手元・GitHub Actions・クラウドセッションで共通に使う |
 | インフラ | GCP（Cloud Run + Cloud SQL）+ Terraform | 下の「デプロイ」 |
 | Git フック | [Lefthook](https://github.com/evilmartians/lefthook) | pre-commit・pre-push・commit-msg で検査を動かす |
+
+### backend（`apps/backend`）
+
+| 領域 | 技術 | 備考 |
+| --- | --- | --- |
+| 構成 | DDD の 4 層（presentation / application / domain / infra） | API は Next の Route Handler から各 feature の `*.api.ts` を呼ぶ（`.claude/rules/code/backend.md`） |
+| データベース | [PostgreSQL](https://www.postgresql.org/) | 18。アプリは常に Postgres（InMemory のリポジトリはテスト用） |
+| ORM / マイグレーション | [Drizzle ORM](https://orm.drizzle.team/) + drizzle-kit | 生成した SQL でマイグレーションする（スキル `db-migration`） |
+| DB ドライバ | [node-postgres（pg）](https://node-postgres.com/) | |
+| エラー応答 | RFC 9457 Problem Details | 項目ごとの誤りは `errors` に載せる |
+| フィーチャーフラグ | [OpenFeature](https://openfeature.dev/)（OFREP の API） | フラグの値は backend に固定で持つ（ADR `docs/adr/architecture/20261002-feature-flag-ofrep-hardcoded.md`） |
+
+### frontend（`apps/frontend_customer`）
+
+SSR でのデータ取得・Server Components での取得・Server Actions は使わず、データは hook → `api/` → `/api/...`（Route Handler）で取る（`.claude/rules/code/frontend.md`）。
+
+| 領域 | 技術 | 備考 |
+| --- | --- | --- |
+| UI | [React](https://react.dev/) 19 | [React Compiler](https://react.dev/learn/react-compiler) を有効にし、`useCallback` / `useMemo` は手で書かない |
+| UI 部品・テーマ | [Mantine](https://mantine.dev/) | Mantine を直接使うのは `shared/ui` だけ（デザインシステム） |
+| データ取得・更新 | [TanStack Query](https://tanstack.com/query) | `useQuery` / `useMutation`。キーと取得の関数は feature の `api/` の `*Queries` に置く（ADR `docs/adr/tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md`） |
+| フォーム | [React Hook Form](https://react-hook-form.com/) + zod（`@hookform/resolvers`） | 値の規則の正は backend。サーバの項目ごとの誤りを入力の下に出す |
+| クライアントの共有状態 | [zustand](https://github.com/pmndrs/zustand) | 画面をまたいで共有するクライアントだけの状態に使う。store は `stores/` の下にだけ置く（ADR `docs/adr/tech-stack/20261003-zustand-for-client-shared-state.md`） |
+| フィーチャーフラグ | [OpenFeature](https://openfeature.dev/) の React SDK + OFREP の web provider | `useFeatureFlag("key")` |
+| i18n | 自前（`shared/i18n`） | ライブラリは使わない（ADR `docs/adr/architecture/20260929-i18n-without-library.md`） |
+| テスト | [Testing Library](https://testing-library.com/)（React・user-event） | hook は `renderHook`、画面は user-event で操作する |
 
 テスト・lint・セキュリティのツールは下の「品質ツール」の表。
 

@@ -4,6 +4,7 @@ paths:
   - "**/*.test.tsx"
   - "apps/e2e/**"
   - "apps/backend/spec/**"
+  - "apps/frontend_customer/spec/**"
   - "rule-tests/**"
   - "vitest.config.mts"
   - "vitest.global-setup.ts"
@@ -18,6 +19,7 @@ paths:
 - 層ごとの単体テスト: 分岐と失敗の網羅、mutation を殺す担い手。
 - domain 仕様: Entity の業務ルール。domain の単体テストには技術の仕組み（id の形・不変・値の凍結・型を偽った値・Invalid Date・origin・完全コンストラクタ）だけを残す。
 - API 仕様: API ごとに必ず置く（`api-spec-pair`）。API ジャーニー: API を足したら、それを使う業務の流れを足す（API 網羅率 100%）。E2E: 画面を通した利用者の操作。
+- 画面仕様: 画面ごとに必ず置く（`screen-spec-pair`）。画面の単体テストには、画面仕様で起こせないもの（決まった文言・en の表示・フラグの off・API が返さない失敗の組み合わせ・DOM の構造）だけを残す。
 - 役割の違う 2 か所での重複は許す（業務ルールは domain 仕様だけ）。
 
 ## 基本
@@ -31,7 +33,7 @@ paths:
 - テストを足す・書き換えたら、守るコードを 1 度壊して（条件の反転・戻り値の変更・呼び出しの削除）落ちることを確かめ、戻す。WHY: 検証が弱いと壊しても緑のまま。
 
 ## 置き方と環境
-対象と同じディレクトリに `<対象>.test.ts(x)`（`apps/frontend_customer/app/` には置かない）。仕様は `apps/backend/spec/`、E2E は `apps/e2e/spec/`。
+対象と同じディレクトリに `<対象>.test.ts(x)`（`apps/frontend_customer/app/` には置かない）。仕様は `apps/backend/spec/` と `apps/frontend_customer/spec/`、E2E は `apps/e2e/spec/`。
 
 | カテゴリ | 対象 | 方法 | 環境 |
 | --- | --- | --- | --- |
@@ -44,7 +46,8 @@ paths:
 | Backend ジャーニー | `apps/backend/spec/journey/<usecase>.api-journey.test.ts` | 実 Postgres で本番と同じに組み立てた複数の handler を業務の流れの順に呼ぶ（下の「API ジャーニーテスト」） | Node |
 | Shared UT | `apps/shared/` | 純粋な単体テスト（一時ディレクトリの `.env`・`console` の spy・`Clock.now` の `vi.mock`） | Node |
 | Frontend UT | `apps/frontend_customer/features/**/*.hook.ts` | `renderHook` で状態とイベント | jsdom |
-| Frontend UT | `apps/frontend_customer/features/**/*-screen.tsx` | render して操作し、表示を検証 | jsdom |
+| Frontend UT | `apps/frontend_customer/features/**/*-screen.tsx` | render して操作し、表示を検証（画面仕様で起こせないものだけ） | jsdom |
+| Frontend 仕様 | `apps/frontend_customer/spec/screen/<f>/<name>.screen-spec.test.tsx` | 画面を render し、fetch を Route Handler の直接の呼び出しに替えて実 Postgres まで通す（下の「画面仕様」） | jsdom |
 | E2E | `apps/e2e/spec/<name>.feature` と `<name>.steps.ts` | Playwright で本番ビルドを起動し、Chromium で操作（下の「E2E」） | Chromium |
 
 - `apps/backend/`・`apps/shared/` のテストは先頭に `// @vitest-environment node`（既定は jsdom）。
@@ -53,7 +56,7 @@ paths:
 
 ## カバレッジ（100%）
 - `pnpm test`（`vitest run --coverage`）は Statements / Branches / Functions / Lines のどれかが 100% 未満なら失敗する（CI でも）。速く回すなら `pnpm test:unit`、完了前は必ず `pnpm test`。設定と WHY は `vitest.config.mts`。
-- 計測対象: `apps/frontend_customer/` の `features/`・`shared/`・`test-support/`、`apps/backend/`、`apps/shared/`、`scripts/`（`.ts` / `.tsx` / `.mjs`。テスト・`*.d.ts`・`apps/backend/` 直下の `*.config.ts` を除く）。
+- 計測対象: `apps/frontend_customer/` の `features/`・`shared/`・`test-support/`・`spec/`、`apps/backend/`、`apps/shared/`、`scripts/`（`.ts` / `.tsx` / `.mjs`。テスト・`*.d.ts`・`apps/backend/` 直下の `*.config.ts` を除く）。
 - 計測しない: `apps/frontend_customer/app/`・`proxy.ts`・`instrumentation*.ts`（結線・起動だけ。中身は別のテスト、結線は E2E）、設定ファイル、`.sh`（V8 は JS しか測れない）。
 - 足りなければテストを足す（`/* v8 ignore */` で逃がさない）。対象外を増やすときは上の方針に合うか確かめ、`vitest.config.mts` とここに理由を書く。
 
@@ -65,17 +68,18 @@ paths:
 
 ## テストダブル
 - backend: InMemory リポジトリ（`apps/backend/test-support/<feature>/<名前>-repository.in-memory.ts`。`in-memory-placement`）を query / command に渡す。書き込みの command には `InMemoryTransactionRunner`（`test-support/transaction-runner.in-memory.ts`。rollback は再現しない）も渡す。直接置くときは `repository.insert(<entity>, inMemoryTransaction)`。WHY: モックは「こう呼ばれるはず」を書き込むので、実装とずれても緑のまま。
-  - 検査は `rule-tests/test-doubles.test.ts`: backend のテストの `vi.mock` / `vi.doMock` は `@repo/shared/now` だけ（ほかは直前の行の `// WHY モック: <理由>`）。`apps/backend/test-support/database` の import は infra のテスト・test-support 自身のテスト（直下と `<feature>/*-builder.test.ts`）・API ジャーニー・API 仕様・`vitest.global-setup.ts` だけ（`db-tests-in-infra-only`）。
+  - 検査は `rule-tests/test-doubles.test.ts`: backend のテストの `vi.mock` / `vi.doMock` は `@repo/shared/now` だけ（ほかは直前の行の `// WHY モック: <理由>`）。`apps/backend/test-support/database` の import は infra のテスト・test-support 自身のテスト（直下と `<feature>/*-builder.test.ts`）・API ジャーニー・API 仕様・画面仕様の step・`vitest.global-setup.ts` だけ（`db-tests-in-infra-only`）。
   - Postgres の実装はモックせず実 Postgres で（SQL・uuid は差し替えると検証できない）。例外は api ファイルの本番の handler の結線の確認: `Postgres<Entity>Repository.prototype` と `PostgresTransactionRunner.prototype.run`（work に `inMemoryTransaction` を渡し DB に接続しない）を spy し、呼ばれることだけを見る。
   - InMemory で起こせない失敗の経路だけ差し替える（常に reject する repository など）。
 - テストデータビルダー: 実 Postgres のテストの前提の行は `apps/backend/test-support/<feature>/<名前>-builder.ts`（`<Entity>Builder.of(db).<項目>(値).build()`）で表に直接入れる。`build()` は入れた値を返し、指定しない値は既定値、setter は新しいビルダーを返す。`change_logs` は書かない。テストは隣の `*-builder.test.ts`。WHY API・Repository を通さない: 前提を対象でない API に依存させず、不変条件を満たさない行も作れ、確かめる記録が対象の操作のものだけになる。
 - 時計: `Clock.now`（`apps/shared/now.ts`）を `vi.mock`（backend は `"@repo/shared/now"`、`apps/shared` は `"./now"`）し、`vi.mocked(Clock.now).mockReturnValue(date)` / `mockReturnValueOnce(date)`、`afterEach` で `mockReset()`。自動モックの既定は `undefined`。実時刻のテストもあるファイルは `{ spy: true }`。`vi.useFakeTimers` は `now.ts` 自身のテストだけ。WHY: 時計は横断的な seam（`.claude/rules/code/shared.md`）。
-- 画面側の hook / screen: `vi.mock("@/features/<feature>/api/<feature>-api")` と `vi.mocked(<Feature>Api.list).mockResolvedValue(...)`。WHY: 境界の `api/` で切ると HTTP やサーバの状態に依存しない。
+- 画面側の hook / screen の単体テスト: `vi.mock("@/features/<feature>/api/<feature>-api")` と `vi.mocked(<Feature>Api.list).mockResolvedValue(...)`。WHY: 境界の `api/` で切ると HTTP やサーバの状態に依存しない。
+- 画面仕様: テストダブルを使わない。fetch は `apps/frontend_customer/test-support/route-fetch.ts` の `RouteFetch`（Route Handler の直接の呼び出し）、DB は `TestDatabase` の `installAsAppDatabase()`（本番の handler の `AppDatabase` をテスト用のスキーマにする）で替え、モックしてよいのは `next/navigation`（遷移）だけ（`screen-spec-mock-only-navigation`）。
 - `api/`: `vi.stubGlobal("fetch", vi.fn<typeof fetch>())` で、送った URL・メソッド・本文と応答の扱いを検証する。
 - 非同期の順序（古い応答が後から届くなど）は任意の時に resolve できる `deferred()`（各テストファイルに定義）で作る。WHY: `mockResolvedValue` は即時で、タイマーは環境の速さに左右される。
 
 ## ルール検査テスト（規則・設定が効いていることを検査するテスト）
-今あるもの: `rule-tests/architecture.test.ts`（`.claude/rules/code/architecture-check.md`）、`rule-tests/lint.test.ts`（`.claude/rules/quality/lint.md`）、`rule-tests/package.test.ts`・`rule-tests/pnpm-workspace.test.ts`・`rule-tests/licenses.test.ts`（`.claude/rules/tooling/dependencies.md`）、`rule-tests/typecheck.test.ts`（`pnpm typecheck` と CI の順序）、`rule-tests/schema.test.ts`・`rule-tests/migration.test.ts`・`rule-tests/persistence.test.ts`・`rule-tests/api-request.test.ts`・`rule-tests/use-case.test.ts`・`rule-tests/domain-validation.test.ts`・`rule-tests/test-support.test.ts`（`.claude/rules/code/backend.md`）、`rule-tests/test-doubles.test.ts`・`rule-tests/test-phases.test.ts`・`rule-tests/api-journey.test.ts`・`rule-tests/api-spec.test.ts`・`rule-tests/domain-spec.test.ts`・`rule-tests/e2e-feature.test.ts`・`rule-tests/rule-test-feature.test.ts`（このファイル）、`rule-tests/rules-table.test.ts`（`.claude/rules/code/*.md` は見出し・`| カテゴリ | WHAT | WHY | 強制 |` の表・コードブロックだけ、強制は `レビュー` / `説明` / 実在する検査）、`rule-tests/design-system.test.ts`・`rule-tests/screen-outline.test.ts`（`.claude/rules/code/frontend.md`）、`rule-tests/settings.test.ts`（`.claude/rules/tooling/git-guard.md`）、`rule-tests/work-logs-check.test.ts`（`.claude/rules/tooling/work-log-hooks.md`）、`rule-tests/github-actions.test.ts`（`.claude/rules/tooling/github-actions.md`）、`rule-tests/security-scan.test.ts`（`.claude/rules/tooling/security-scan.md`）、`rule-tests/issue-template.test.ts`（`<type>.yml` と `config.yml` だけ・labels はファイル名の type・項目は 目的・内容・完了条件・前提（任意）の順・空の Issue の禁止）、`rule-tests/gitattributes.test.ts`（`linguist-generated` は lockfile・drizzle-kit の meta・`docs/`・`.claude/` だけ）、`rule-tests/instructions.test.ts`（指示ファイル・ADR・スキルの形。この行の一覧は `rule-tests-index` が検査）、`scripts/cloud-session-start.test.ts`（`.claude/rules/tooling/cloud-session.md`）と、git ガード・作業ログ・worktree のフックのテスト（`scripts/hooks/*.test.ts`）。テスト以外のゲート（カバレッジ・フック・CI の required check・型チェック）も同じ扱い。
+今あるもの: `rule-tests/architecture.test.ts`（`.claude/rules/code/architecture-check.md`）、`rule-tests/lint.test.ts`（`.claude/rules/quality/lint.md`）、`rule-tests/package.test.ts`・`rule-tests/pnpm-workspace.test.ts`・`rule-tests/licenses.test.ts`（`.claude/rules/tooling/dependencies.md`）、`rule-tests/typecheck.test.ts`（`pnpm typecheck` と CI の順序）、`rule-tests/schema.test.ts`・`rule-tests/migration.test.ts`・`rule-tests/persistence.test.ts`・`rule-tests/api-request.test.ts`・`rule-tests/use-case.test.ts`・`rule-tests/domain-validation.test.ts`・`rule-tests/test-support.test.ts`（`.claude/rules/code/backend.md`）、`rule-tests/test-doubles.test.ts`・`rule-tests/test-phases.test.ts`・`rule-tests/api-journey.test.ts`・`rule-tests/api-spec.test.ts`・`rule-tests/domain-spec.test.ts`・`rule-tests/screen-spec.test.ts`・`rule-tests/e2e-feature.test.ts`・`rule-tests/rule-test-feature.test.ts`（このファイル）、`rule-tests/rules-table.test.ts`（`.claude/rules/code/*.md` は見出し・`| カテゴリ | WHAT | WHY | 強制 |` の表・コードブロックだけ、強制は `レビュー` / `説明` / 実在する検査）、`rule-tests/design-system.test.ts`・`rule-tests/screen-outline.test.ts`（`.claude/rules/code/frontend.md`）、`rule-tests/settings.test.ts`（`.claude/rules/tooling/git-guard.md`）、`rule-tests/work-logs-check.test.ts`（`.claude/rules/tooling/work-log-hooks.md`）、`rule-tests/github-actions.test.ts`（`.claude/rules/tooling/github-actions.md`）、`rule-tests/security-scan.test.ts`（`.claude/rules/tooling/security-scan.md`）、`rule-tests/issue-template.test.ts`（`<type>.yml` と `config.yml` だけ・labels はファイル名の type・項目は 目的・内容・完了条件・前提（任意）の順・空の Issue の禁止）、`rule-tests/gitattributes.test.ts`（`linguist-generated` は lockfile・drizzle-kit の meta・`docs/`・`.claude/` だけ）、`rule-tests/instructions.test.ts`（指示ファイル・ADR・スキルの形。この行の一覧は `rule-tests-index` が検査）、`scripts/cloud-session-start.test.ts`（`.claude/rules/tooling/cloud-session.md`）と、git ガード・作業ログ・worktree のフックのテスト（`scripts/hooks/*.test.ts`）。テスト以外のゲート（カバレッジ・フック・CI の required check・型チェック）も同じ扱い。
 - 形: `rule-tests/<名前>.feature`（`Feature:` の下に `Scenario:` と `*` の step だけ）と、`loadFeature("./<名前>.feature")` で読む `<名前>.test.ts` の対。describe 1 つ = Scenario 1 つ、it 1 つ = `*` 1 つ。表のケースは `*` 1 行にまとめ、原則 `rule-tests/case-table.ts` の `casesByName` で比べる（名前が重なる・1 件に expect が複数なら `for` と `expect` の第 2 引数のケース名）。vitest から it / test / describe / suite を import しない。step の文に先頭以外の `*`・波かっこ・対でないかっこを書かない（正規表現として読まれる）。検査は `rule-tests/rule-test-feature.test.ts`。
 - **must pass と must reject の両方**を持つ（「今のリポジトリで違反 0 件」は must pass の 1 例にすぎない）。判定を関数に切り出して架空の入力で固定し、同じ関数で実ファイルを検査する。一時ディレクトリの fixture で end-to-end に通し、違反の集合は `toEqual` で丸ごと比べる。列挙が空なら失敗させる。規則を変えたら例と fixture も直す。WHY: must reject だけでは「何でも違反」、must pass だけでは「常に緑」を、判定だけでは抽出の漏れを検出できない。
 - **fault injection** は必須（最小セット: 規則を破る 1 件・判定を常に許可・常に拒否）。戻して `git status --short` と `git diff` を確かめ、何を壊して何件落ちたかを報告・PR に書く。手順はスキル `rule-check-test`。
@@ -83,7 +87,7 @@ paths:
 ## API ジャーニーテスト
 実 Postgres で、複数の API の handler を業務の流れの順に呼ぶテスト。流れを Gherkin（`@amiceli/vitest-cucumber`）の `.feature` に日本語の step で書き、step の実装を対の `.api-journey.test.ts` に書く（この対だけ）。検査は `rule-tests/api-journey.test.ts`（WHY と限界はその冒頭）。
 - 分岐の網羅は持ち込まない（単体で行う）。WHY: 単体は Postgres を通したつながりを見ず、E2E は遅く切り分けにくい。
-- 置き場所: `apps/backend/spec/journey/` の直下に `<usecase>.feature` と `<usecase>.api-journey.test.ts`（`api-journey-feature-pair`）。外の `.feature`（`spec/api/`・`spec/domain/`・`apps/e2e/` を除く）と `*.api-journey.test.*` / `*.journey.test.*` は違反（`api-journey-placement`）。WHY: `.feature` を実行するのは対の step だけ。共通の補助は `apps/backend/test-support/`。1 対 = 1 業務ユースケース、1 シナリオ = 1 つの流れ（順序で状態を担保）。
+- 置き場所: `apps/backend/spec/journey/` の直下に `<usecase>.feature` と `<usecase>.api-journey.test.ts`（`api-journey-feature-pair`）。外の `.feature`（`spec/api/`・`spec/domain/`・`apps/e2e/`・`features/<f>/screens/` を除く）と `*.api-journey.test.*` / `*.journey.test.*` は違反（`api-journey-placement`）。WHY: `.feature` を実行するのは対の step だけ。共通の補助は `apps/backend/test-support/`。1 対 = 1 業務ユースケース、1 シナリオ = 1 つの流れ（順序で状態を担保）。
 - step のファイルは `loadFeature("./<usecase>.feature")` で対の `.feature` を読む（読むパスが対かは検査しない）。
 - 組み立ては本番の api ファイルの最下部と同じで、db だけ `TestDatabase.create()`（本番の `export const GET` は `.env` の DB を指す）。`beforeAll` で `create()` と `migrate()`、`Background` で `TRUNCATE`、`afterAll` で `close()`。
 - `.feature` の書き方（E2E も同じ。禁止語は API 仕様・domain 仕様も同じ）:
@@ -144,6 +148,21 @@ Entity の業務ルール（不変条件・用語・規則の理由）を `<name
 - 置き場所: `apps/backend/spec/domain/<feature>/` の直下の対だけ（`domain-spec-placement` / `domain-spec-pair`）。
 - `.feature`: `Feature:` → `Rule:` → `Scenario:` → `*`（各 Scenario に 1 つ以上）。`Feature:` と各 `Rule:` の直後に説明の行（仕様メモ。用語と規則の理由）を 1 行以上（`domain-spec-structure`）。`#` のコメントは開発者向けで仕様メモと混ぜない。キーワードはこの 4 つだけで、タグ・`# language:` は使わない（`domain-spec-keyword` / `domain-spec-tag`）。禁止語は API ジャーニーと同じ（`domain-spec-business-language`）。WHY 仕様メモ: 規則だけでは「なぜ」が読めない。
 - step の実装: `loadFeature("./<name>.feature")`（第 2 引数なし）を `describeFeature` に渡し、skip・タグの絞り込みを使わない（`domain-spec-load-feature`）。同じ feature の `internal/domain/` を相対パスで値として import し、InMemory と `test-support/database` は使わない（`domain-spec-pure`）。`Rule` → `RuleScenario` → `And`（`*`）で書き、step 1 つで前提から検証まで完結させる。時計は `Clock.now` の `vi.mock`。Stryker の実行に含まれる。
+
+## 画面仕様（spec/screen）
+画面 1 つの表示・操作・異常系を `<name>.feature` に業務の言葉で書き、`<name>.screen-spec.test.tsx` が本物の画面・hook・`api/` と、`app/api` の Route Handler・backend・実 Postgres を通して確かめる。画面の単体テスト・hook のテストも残す。検査は `rule-tests/screen-spec.test.ts`（WHY と限界はその冒頭）。決定は ADR `docs/adr/quality/20261004-screen-spec-with-real-api.md`。
+- 置き場所: 画面（`features/<f>/screens/<name>/<name>.tsx`）ごとに、`apps/frontend_customer/spec/screen/<f>/` の直下に `<name>.feature` と `<name>.screen-spec.test.tsx` の対を置く。step が共有する補助は同じ場所の `support.ts`（`.tsx` も）だけで、`spec/` の下にほかのファイルを置かない（`screen-spec-placement` / `screen-spec-pair`）。WHY: backend の API 仕様（`spec/api/<feature>/`）と同じ形にし、人が読む仕様を `spec/` の下で拾い読みできる。
+- `.feature`: `Feature:` の下に `Scenario:` を `表示項目` → `インタラクション` → `異常系` の順に 1 回ずつ（該当が無くても省かない。`screen-spec-scenario-*`）。step は `*` だけ（1 行 = 1 振る舞い = 1 テスト）。キーワード・タグ・禁止語は API 仕様と同じ（`screen-spec-keyword` / `screen-spec-tag` / `screen-spec-business-language`）。
+  - `表示項目`: 保存された内容で変わる表示（並び・状態・書式・リンク先・空のとき・読み込み中）。決まった文言（見出し・ボタンの名前）は書かない（画面の単体テストが見る）。WHY: 仕様は「何が出るか」で、文言の言い回しは辞書の都合。機械化: 縛れない（静的な文言かは字句で決まらない）。
+  - `インタラクション`: クリック・入力と送信・画面のギミック（前後の空白・再読み込みしない など）のすべてと、その後に保存される内容と画面の変化。
+  - `異常系`: 失敗の起こし方（長すぎる入力・ほかで削除された・壊れた行）と、そのときに出るもの・保存が変わらないこと。
+- step の実装:
+  - `beforeAll` で `TestDatabase.create()`・`migrate()`・`installAsAppDatabase()`、`RouteFetch.install()`（route.ts は最初のリクエストで読み込まれるので、`installAsAppDatabase()` を先に呼ぶ）。`afterAll` で `restore()` と `close()`。各テストの前に画面を片付け、表を `TRUNCATE`。前提の行はテストデータビルダーで入れる。
+  - 利用者の操作（userEvent の `click` / `type` / `clear` / `paste` など・要素の `.click()` などの DOM のメソッド・`fireEvent.<名前>`）をする step は、同じ step の中で保存された行を読み、その結果を `expect` に直接渡す（`await expect(SavedTodos.of(database.pool).read()).resolves.toEqual([...])` か `expect(await SavedTodos.of(database.pool).read())`。`Saved…` から始まり `.read(...)` の呼び出しで終わる連鎖を await したものだけを数える）。行を読む補助は `support.ts` に置き、名前を `Saved` で始め、行を読むメソッドを `read` にする。書き込みが起きる操作では変わった後の行を、起きないはずの操作（空白だけ・長すぎる・送っても再読み込みしない・ほかで削除された など）でも行が変わっていないことを確かめる（`screen-spec-operation-reads-saved`）。WHY: 画面に出ただけでは、キャッシュの書き換えだけで保存されていない誤りを見逃す。限界: 操作を補助の関数の中で呼ぶ・`fireEvent(el, evt)` を直接呼ぶ・`form.requestSubmit()`・分割代入した `click(` は操作に数えず（見逃す）、操作でない同じ名前の呼び出し（`queryClient.clear()` など）は操作に数える（違反になる）。`Saved…` の `read` が実際に保存先を読んでいるか・比べ方は見ない（reviewer が見る）。
+  - モックは `next/navigation` だけ。遷移はリンクの `href` で確かめる（`next/link` のクリックは `next/navigation` を通らない）。feature の `api/` の `<x>-api` と `*.in-memory` は import しない（`screen-spec-no-feature-api` / `screen-spec-no-in-memory`）。`test-support/database` と `test-support/route-fetch` を値で import し、`.installAsAppDatabase(` と `RouteFetch.install(` を呼ぶ（呼び忘れると開発用 DB の `public` の表に書き込むため。`screen-spec-uses-real-database` / `screen-spec-uses-route-fetch`）。
+  - `loadFeature("./<name>.feature")`（第 2 引数なし）で読み、skip・タグの絞り込みを使わない（`screen-spec-load-feature` / `screen-spec-no-skip`）。
+  - backend の `test-support/database` とテストデータビルダーは相対パス（`../../../../backend/test-support/...`）で import する（`exports` に test-support を載せない。Biome の例外は `.claude/rules/quality/lint.md`）。画面の辞書は `@/features/<f>/screens/<name>/<name>.messages` で import する。
+- `pnpm test` の実行に含まれる。
 
 ## mutation testing（Stryker）
 手順・生き残りの直し方・日次ジョブはスキル `mutation-testing`、設定の WHY は `stryker.config.mjs`。

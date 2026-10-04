@@ -2,11 +2,17 @@
 # PR の差分に作業ログ（docs/work-logs/ の .md）の変更があるかを検査する。Issue #64（置き場所は Issue #101 で docs/ の下に移した）。
 # 使い方: bash scripts/hooks/check-work-logs-diff.sh <base-ref>（CI では origin/<PR の base ブランチ>）
 #
-# WHAT: `git diff --name-only --no-renames --diff-filter=AM <base-ref>...HEAD` に ^docs/work-logs/.*\.md$ が 1 件以上あれば exit 0、無ければ理由を出して exit 1。
+# WHAT: `git diff --name-only --no-renames --diff-filter=AM <base-ref>...HEAD` に、PR のブランチの作業ログ
+#   docs/work-logs/<YYYY-MM-DD>/<ブランチ名の / を - にしたもの>.md（Issue #441）があれば exit 0、無ければ理由を出して exit 1。
+# WHY ブランチごとのファイル: 1 日 1 ファイル（docs/work-logs/<日付>.md）だと、どの PR も同じファイルの末尾に追記するので、
+#   1 本マージされるたびに残りの PR が競合し、GitHub が CI も auto-merge も動かさずに PR が取り残された（2026-10-03 の棚卸し）。
+#   ブランチ = PR ごとに別のファイルにすれば追記どうしが競合しない。1 日 1 ファイル・別のブランチのファイルへの追記では通さない。
+# WHY ブランチ名を GITHUB_EVENT_PATH の pull_request.head.ref で見る: CI の actions/checkout は PR のマージコミットを
+#   detached HEAD で取り出すので、今のブランチ名が無い。手元の実行（GITHUB_EVENT_PATH が無い・読めない）では今のブランチ名。
 # WHY --diff-filter=AM（追加 A と変更 M だけ）: ログを削除しただけ（D）の PR は、記録を足していないので通さない。
 # WHY --no-renames: 名前の変更を常に「削除 + 追加」として扱い、利用者の diff.renames の設定に結果が左右されないようにする
 #   （rename の検出が効くと R になり、AM で外れる）。限界: ログの名前を変えただけの PR は「追加」があるので通る。
-# WHY: 作業ログ（docs/work-logs/YYYY-MM-DD.md）の追記漏れを CI で止める（Issue #64 のユーザー判断。文書だけの PR も含める。例外は下の Renovate の依存更新の PR だけ）。
+# WHY: 作業ログの追記漏れを CI で止める（Issue #64 のユーザー判断。文書だけの PR も含める。例外は下の Renovate の依存更新の PR だけ）。
 #   Stop フック（scripts/hooks/require-work-log.sh）はセッションの中の漏れを止め、こちらは PR 単位で止める。
 # WHY 三点（...）: base-ref と HEAD の分岐点から HEAD までの差分（= PR の変更）だけを見る。二点（..）だと、PR の後に
 #   base 側で入った作業ログの変更まで数えてしまう。分岐点を求めるので、CI の checkout は履歴を全部取る（fetch-depth: 0）。
@@ -52,13 +58,29 @@ if [ "$pr_author" = "renovate[bot]" ]; then
 fi
 
 # git diff の失敗（base-ref が無い・分岐点が無いなど）は通さない（差分が取れないまま exit 0 にしない）。
-if ! changed=$(git diff --name-only --no-renames --diff-filter=AM "${base}...HEAD"); then
+# WHY core.quotePath=false: 既定（true）では非 ASCII のパスが "..." で囲まれ 8 進でエスケープされるので、日本語を含むブランチ名の
+#   ログのファイル名が下の比較で一致しない（PR #444 の Codex の指摘。テストで固定）。
+if ! changed=$(git -c core.quotePath=false diff --name-only --no-renames --diff-filter=AM "${base}...HEAD"); then
   echo "check-work-logs-diff: ${base}...HEAD の差分を取れない（base-ref と履歴を確認。CI では actions/checkout の fetch-depth: 0 が要る）" >&2
   exit 1
 fi
 
-if ! printf '%s\n' "$changed" | grep -Eq '^docs/work-logs/.*\.md$'; then
-  echo "check-work-logs-diff: ${base}...HEAD に作業ログ（docs/work-logs/*.md）の変更がありません。この PR でやったこと（調査・判断・確認した事実）を docs/work-logs/<日付>.md に追記してコミットしてください（.claude/rules/tooling/work-log-hooks.md）。" >&2
+# PR のブランチ名。JSON でない・キーが無いときは空（手元のブランチ名にフォールバックする）。
+head_ref=""
+if [ -n "${GITHUB_EVENT_PATH:-}" ]; then
+  head_ref=$(node -e 'try { const e = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")); process.stdout.write(String(e?.pull_request?.head?.ref ?? "")); } catch {}' "$GITHUB_EVENT_PATH" 2>/dev/null || true)
+fi
+if [ -z "$head_ref" ] && ! head_ref=$(git symbolic-ref --short -q HEAD); then
+  echo "check-work-logs-diff: PR のブランチ名を決められない（GITHUB_EVENT_PATH の pull_request.head.ref が無く、detached HEAD）" >&2
+  exit 1
+fi
+own_log="${head_ref//\//-}.md"
+
+# 日付のディレクトリの下のファイルだけを取り出し、ファイル名がブランチのものと完全に一致するかを見る。
+# WHY grep -F -x でファイル名を比べる: ブランチ名の . や + を正規表現として読まない。
+if ! printf '%s\n' "$changed" | grep -E '^docs/work-logs/[0-9]{4}-[0-9]{2}-[0-9]{2}/[^/]+\.md$' |
+  sed -E 's#^docs/work-logs/[^/]+/##' | grep -Fqx -- "$own_log"; then
+  echo "check-work-logs-diff: ${base}...HEAD に、この PR のブランチの作業ログ docs/work-logs/<日付>/${own_log} の変更がありません。この PR でやったこと（調査・判断・確認した事実）をそこに書いてコミットしてください（1 日 1 ファイルの docs/work-logs/<日付>.md や、別のブランチのファイルでは通さない。.claude/rules/workflow/work-log.md）。" >&2
   exit 1
 fi
 
