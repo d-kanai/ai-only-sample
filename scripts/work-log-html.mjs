@@ -260,11 +260,12 @@ export function buildHtml(days) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>作業ログ</title>
 <style>
-/* 読むための 1 列。日付の目次を上に固定し、ファイルごとの節を枠で区切る。 */
+/* 読むための 1 列。日付の目次を上に固定し、ファイルごとの節を枠で区切る。
+   画面の幅に固定する（横のスクロールを出さない。daiki、2026-10-04）: 長い英数字の並びもコードの囲みも折り返す。 */
 :root { --bg: #fbfbfa; --fg: #1d2127; --muted: #5d6673; --line: #d5d9de; --surface: #ffffff; --code: #eef1f4; --accent: #2457a6; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #111418; --fg: #e3e7ec; --muted: #9aa4b1; --line: #2c333c; --surface: #171b21; --code: #20262e; --accent: #7fa8e8; color-scheme: dark; } }
 :root[data-theme="dark"] { --bg: #111418; --fg: #e3e7ec; --muted: #9aa4b1; --line: #2c333c; --surface: #171b21; --code: #20262e; --accent: #7fa8e8; color-scheme: dark; }
-body { font-family: system-ui, sans-serif; font-size: 15px; line-height: 1.7; margin: 0 auto; max-width: 72ch; padding-block: 16px; padding-inline: 16px; color: var(--fg); background: var(--bg); }
+body { font-family: system-ui, sans-serif; font-size: 15px; line-height: 1.7; margin: 0 auto; max-width: 72ch; padding-block: 16px; padding-inline: 16px; color: var(--fg); background: var(--bg); overflow-wrap: anywhere; }
 a { color: var(--accent); overflow-wrap: anywhere; }
 nav { display: flex; flex-wrap: wrap; gap: 4px 12px; position: sticky; top: env(safe-area-inset-top, 0px); background: var(--bg); padding-block: 8px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 h1 { font-size: 1.4rem; margin: 0 0 8px; }
@@ -275,8 +276,8 @@ article { background: var(--surface); border: 1px solid var(--line); border-radi
 .file { color: var(--muted); font-size: 0.8rem; letter-spacing: 0.02em; margin: 8px 0 0; }
 code, pre { background: var(--code); border-radius: 4px; font-size: 0.88em; }
 code { padding: 0 4px; overflow-wrap: anywhere; }
-pre { overflow-x: auto; padding: 8px; }
-pre code { padding: 0; overflow-wrap: normal; }
+pre { white-space: pre-wrap; padding: 8px; }
+pre code { padding: 0; }
 ul { padding-left: 1.25em; }
 </style>
 </head>
