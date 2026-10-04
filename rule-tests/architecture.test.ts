@@ -930,7 +930,7 @@ const RULES: Rule[] = [
     // WHY apps/e2e/ とリポジトリ直下も対象にする: apps/e2e/playwright.config.ts・apps/e2e/support/database.ts・vitest.global-setup.ts も env.ts などを
     //   使う。相対パスを許すと、exports に無いファイルを使っていても気づけない。
     id: "frontend-to-backend-specifier",
-    name: 'apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/backend/ への参照は "@repo/backend/..." の書き方だけ（相対パスや "@/../backend/" を使わない。例外は vitest.global-setup.ts → test-support/database の相対パスだけ）',
+    name: 'apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/backend/ への参照は "@repo/backend/..." の書き方だけ（相対パスや "@/../backend/" を使わない。対象はテスト以外のソース。例外は vitest.global-setup.ts → test-support/database の相対パスだけ）',
     appliesTo: (from) =>
       isUnder(from, FRONTEND_ROOT) ||
       isUnder(from, E2E_ROOT) ||

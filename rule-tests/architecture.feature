@@ -7,7 +7,7 @@ Feature: ディレクトリ構成ルール（依存の向き）
     * apps/frontend_customer/ のソースファイルは app/・features/・shared/・test-support/ の下か、直下の next.config.ts・instrumentation.ts・instrumentation-node.ts・proxy.ts・next-env.d.ts だけに置く
     * apps/shared/ に置いてよいのは env.ts・logger.ts・log-event.ts・now.ts とそのテスト（env.test.ts・logger.test.ts・log-event.test.ts・now.test.ts）、env.ts と log-event.ts から分けたクラスのファイル（env-reader.ts・log-field-marks.ts・free-text-mask.ts・request-log-schema.ts・log-severity.ts）、package.json・tsconfig.json だけ
     * apps/shared の全ファイル（ソース・テスト・package.json・tsconfig.json）を列挙できている（列挙が壊れて素通りするのを防ぐ）
-    * apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/backend/ への参照は "@repo/backend/..." の書き方だけ（相対パスや "@/../backend/" を使わない。例外は vitest.global-setup.ts → test-support/database の相対パスだけ）
+    * apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/backend/ への参照は "@repo/backend/..." の書き方だけ（相対パスや "@/../backend/" を使わない。対象はテスト以外のソース。例外は vitest.global-setup.ts → test-support/database の相対パスだけ）
     * apps/frontend_customer/・apps/e2e/・リポジトリ直下のファイルから apps/shared/ への参照は "@repo/shared/..." の書き方だけ（相対パスや "@/../shared/" を使わない）
     * apps/backend/ は apps/frontend_customer/ を参照しない
     * apps/backend/ の中の自前コードへの import は相対パスだけで（"@/" と "@repo/backend/" を使わない）、apps/shared へは "@repo/shared/..." だけ（相対パスは使わない）
