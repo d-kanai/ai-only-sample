@@ -102,8 +102,9 @@ function checkSource(fileName: string, lines: string[]) {
 }
 
 // complexity/noStaticOnlyClass の override（Issue #262）: apps/backend/**・apps/shared/**・apps/e2e/** と、apps/frontend_customer の
-//   features/**・shared/**・test-support/** のうち *.tsx・*.jsx・*.hook.*・*.test.* 以外だけ off にする。どれも最上位に関数を置かず（apps/e2e は
-//   spec 以外の補助。database.ts の E2eDatabase。frontend は React 以外のモジュール。todo-api.ts の TodoApi）、状態の無い補助を
+//   features/**・shared/**・test-support/**・spec/** のうち *.tsx・*.jsx・*.hook.*・*.test.* 以外だけ off にする。どれも最上位に
+//   関数を置かず（apps/e2e は spec 以外の補助。database.ts の E2eDatabase。frontend は React 以外のモジュール。todo-api.ts の
+//   TodoApi と、画面仕様の補助 spec/screen/<f>/support.ts の SavedTodos）、状態の無い補助を
 //   static だけのクラスにする（ADR docs/adr/architecture/20261002-class-based-backend.md・20261002-class-based-shared-and-test-support.md・
 //   20261002-class-based-frontend-modules.md）。範囲は rule-tests/architecture.test.ts の規則 class-based の対象と同じにする。
 //   frontend の React の component（*.tsx・*.jsx）・hook（*.hook.*）・app/・直下のファイル（Next の規約）は関数のままなので、
@@ -588,7 +589,7 @@ describeFeature(feature, ({ Scenario }) => {
     "biome check の noStaticOnlyClass は apps/backend・apps/shared・apps/e2e と frontend の React 以外のモジュールだけで off（Issue #262）",
     ({ And }) => {
       And(
-        "apps/backend・apps/shared・apps/e2e・frontend の React 以外のモジュールでは static だけのクラスが 0 で終わる（backend の shared/error・features の infra・test-support、apps/shared、apps/e2e、frontend の features・shared・test-support の .ts と .mts）",
+        "apps/backend・apps/shared・apps/e2e・frontend の React 以外のモジュールでは static だけのクラスが 0 で終わる（backend の shared/error・features の infra・test-support、apps/shared、apps/e2e、frontend の features・shared・test-support の .ts と .mts と spec/ の support.ts）",
         () => {
           // given
           const cases: [string][] = [
@@ -603,6 +604,7 @@ describeFeature(feature, ({ Scenario }) => {
               "apps/frontend_customer/shared/request-log/nested/static-only.mts",
             ],
             ["apps/frontend_customer/test-support/static-only.ts"],
+            ["apps/frontend_customer/spec/screen/todo/support.ts"],
           ];
 
           for (const [path] of cases) {
@@ -644,6 +646,14 @@ describeFeature(feature, ({ Scenario }) => {
             ["apps/frontend_customer/static-only.ts", "frontend の直下"],
             [
               "apps/frontend_customer/features-x/static-only.ts",
+              "名前の前方一致だけが同じ別ディレクトリ",
+            ],
+            [
+              "apps/frontend_customer/spec/screen/todo/support.tsx",
+              "frontend の spec/ の JSX を書く補助（React の component と同じ扱い）",
+            ],
+            [
+              "apps/frontend_customer/spec-x/static-only.ts",
               "名前の前方一致だけが同じ別ディレクトリ",
             ],
             [

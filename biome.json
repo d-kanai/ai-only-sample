@@ -156,6 +156,7 @@
         "apps/frontend_customer/features/**",
         "apps/frontend_customer/shared/**",
         "apps/frontend_customer/test-support/**",
+        "apps/frontend_customer/spec/**",
         "!**/*.tsx",
         "!**/*.jsx",
         "!**/*.hook.*",

@@ -2438,8 +2438,8 @@ function findAppDatabaseSwapViolations(root: string): string[] {
 //   - export default のアロー関数・function 式（export default async () => {}）。
 // 許すもの: クラス（宣言・式）のメンバー（メソッド・アロー関数のクラスフィールド readonly handle = ProblemResponse.wrap(async ...)）、
 //   メソッドや関数の中の関数、型・interface、関数でない値の変数（定数・オブジェクト・new X().handle のようなプロパティの参照）。
-// 対象: apps/backend・apps/shared・apps/e2e の下と、apps/frontend_customer の features/・shared/・test-support/ の下（*.tsx・*.jsx・
-//   *.hook.* を除く）のテスト以外のソース（8 つの拡張子）。テスト（*.test.*）と E2E のテスト（apps/e2e の *.spec.*。E2E_SPEC_FILE）は除く。
+// 対象: apps/backend・apps/shared・apps/e2e の下と、apps/frontend_customer の features/・shared/・test-support/・spec/ の下（*.tsx・
+//   *.jsx・*.hook.* を除く）のテスト以外のソース（8 つの拡張子）。テスト（*.test.*）と E2E のテスト（apps/e2e の *.spec.*。E2E_SPEC_FILE）は除く。
 // WHY frontend の React 以外のモジュールも対象にする（daiki の判断 2026-10-02「クラス必須でルールにして」。ADR
 //   docs/adr/architecture/20261002-class-based-frontend-modules.md）: API の呼び出し（features/<f>/api/）・ロケールの判定・日時の
 //   表示・リクエストログの組み立て（shared/）は React も Next も関数の形を求めないので、backend と同じくクラスのメソッドにそろえる。
@@ -2458,6 +2458,8 @@ function findAppDatabaseSwapViolations(root: string): string[] {
 // WHY テストの補助（apps/backend/test-support/・apps/backend/spec/ の support.ts・apps/e2e/support/database.ts）も対象にする（Issue #262 の
 //   2 つ目の PR。以前は除いていた）: daiki が対象の範囲を「すべて」と決め、テストの補助も移した（ADR
 //   20261002-class-based-shared-and-test-support.md）。テストの組み立てを読むときも依存の形（クラスのメソッド）が本番とそろう。
+//   frontend の画面仕様の補助（spec/screen/<f>/support.ts）も、backend の spec/ の support.ts と同じテストの補助なので対象にする
+//   （置ける名前は frontend-placement が support.ts・support.tsx に絞る。support.tsx は JSX を書くので React の component と同じく外す）。
 // WHY テスト（*.test.*・*.spec.*）は除く: テストの本体は Vitest / Playwright の describe・it・test に関数を渡す形で、ファイルの中だけの
 //   小さな補助の関数（step の中の組み立てなど）まで縛ると、テストの読みやすさを落とすだけで関数の import は増えない（ほかのファイルは
 //   テストを import しない）。
@@ -2475,7 +2477,7 @@ function findAppDatabaseSwapViolations(root: string): string[] {
 //   レビューで見る。
 const CLASS_BASED = {
   id: "class-based",
-  name: "apps/backend と apps/shared の本番コードとテストの補助（apps/backend の test-support/・spec/ の support.ts、apps/e2e の *.spec.* 以外）と apps/frontend_customer の features/・shared/・test-support/ の React 以外のモジュール（*.tsx・*.jsx・*.hook.* 以外）はファイルの最上位に関数を置かない（テストと E2E の *.spec.*、frontend の app/ と直下のファイルは除く。function 宣言・関数を入れた変数・export default の関数は違反。クラスのメソッド・クラスフィールドのアロー関数・メソッドの中の関数は可）",
+  name: "apps/backend と apps/shared の本番コードとテストの補助（apps/backend の test-support/・spec/ の support.ts、apps/e2e の *.spec.* 以外）と apps/frontend_customer の features/・shared/・test-support/・spec/ の React 以外のモジュール（*.tsx・*.jsx・*.hook.* 以外）はファイルの最上位に関数を置かない（テストと E2E の *.spec.*、frontend の app/ と直下のファイルは除く。function 宣言・関数を入れた変数・export default の関数は違反。クラスのメソッド・クラスフィールドのアロー関数・メソッドの中の関数は可）",
   appliesTo: (file: string) =>
     isSourceNonTest(file) &&
     (isUnder(file, BACKEND_ROOT) ||
@@ -2485,9 +2487,12 @@ const CLASS_BASED = {
 };
 
 // frontend のうち規則 class-based の対象にするディレクトリ（WHY は CLASS_BASED の「frontend の次は対象外にする」）。
-const CLASS_BASED_FRONTEND_DIRS = ["features", "shared", "test-support"].map(
-  (dir) => `${FRONTEND_ROOT}/${dir}`,
-);
+const CLASS_BASED_FRONTEND_DIRS = [
+  "features",
+  "shared",
+  "test-support",
+  "spec",
+].map((dir) => `${FRONTEND_ROOT}/${dir}`);
 // React の component（*.tsx・*.jsx）と hook（*.hook.<拡張子>）。
 const REACT_COMPONENT_FILE = /\.[jt]sx$/;
 const REACT_HOOK_FILE = /\.hook\.(?:[cm]?[jt]s|[jt]sx)$/;
@@ -7207,6 +7212,11 @@ const CLASS_BASED_EXAMPLES: {
       "apps/frontend_customer/features/todo/hooks/todo.hooks.ts",
       lines("export function f(): void {}"),
     ],
+    // 35: 画面仕様の step が共有する補助（spec/screen/<f>/support.ts）。backend の spec/ の support.ts と同じくテストの補助として対象。
+    [
+      "apps/frontend_customer/spec/screen/todo/support.ts",
+      lines("export async function readSaved(): Promise<void> {}"),
+    ],
   ],
   allowed: [
     // 0: static だけのクラス（状態の無い補助。biome の noStaticOnlyClass は apps/backend で off）。
@@ -7377,6 +7387,20 @@ const CLASS_BASED_EXAMPLES: {
     ],
     [
       "apps/frontend_customer-x/shared/x.ts",
+      lines("export function f(): void {}"),
+    ],
+    // 28〜30: frontend の spec/ の対象外。画面仕様の step（テスト）、JSX を書く補助（support.tsx。React の component と同じ扱い）、
+    //   前方一致だけが同じ別ディレクトリ（spec-x/）。
+    [
+      "apps/frontend_customer/spec/screen/todo/todo-screen.screen-spec.test.tsx",
+      lines("function given(): void {}"),
+    ],
+    [
+      "apps/frontend_customer/spec/screen/todo/support.tsx",
+      lines("export function Wrapper() {", "  return null;", "}"),
+    ],
+    [
+      "apps/frontend_customer/spec-x/x.ts",
       lines("export function f(): void {}"),
     ],
   ],
@@ -8924,6 +8948,13 @@ const MUST_REJECT_FILES: Record<string, string> = {
   "apps/frontend_customer/features/todo/api/bad-api.hook.ts": lines(
     "export function useApi(): void {}",
   ),
+  // class-based: frontend の画面仕様の補助（spec/screen/<f>/support.ts）の最上位の関数。JSX を書く補助（support.tsx）は対象外（拾わない）。
+  "apps/frontend_customer/spec/screen/todo/support.ts": lines(
+    "export async function readSaved(): Promise<void> {}",
+  ),
+  "apps/frontend_customer/spec/screen/todo/support.tsx": lines(
+    "export function Wrapper() { return null; }",
+  ),
   // no-static-in-instance-class（Issue #300）: インスタンスのメンバーを持つクラスの static メソッド・フィールド（2・3 行目）と、
   //   自分のクラス以外を返す static（4 行目）。自分のクラスを返すファクトリ（5 行目）と static だけのクラス（8 行目）は拾わない。
   "apps/backend/shared/drizzle/bad-static.ts": lines(
@@ -9025,6 +9056,7 @@ const MUST_REJECT_VIOLATIONS = [
   "class-based: apps/e2e/bad-helper.ts:1",
   "class-based: apps/frontend_customer/features/todo/api/bad-class-api.ts:2",
   "class-based: apps/frontend_customer/shared/i18n/bad-format.ts:1",
+  "class-based: apps/frontend_customer/spec/screen/todo/support.ts:1",
   ...[2, 3, 4].map(
     (line) =>
       `no-static-in-instance-class: apps/backend/shared/drizzle/bad-static.ts:${line}`,
@@ -10765,7 +10797,7 @@ describeFeature(feature, ({ Scenario }) => {
 
     // WHY 本物のファイルが列挙に入っていることを見る: 列挙（パスの判定）が壊れて 0 件になると、違反も 0 件で常に緑になる。
     And(
-      "最上位に関数を置かない規則は、apps/backend の本番コード（層・expose・drizzle.config.ts）・apps/shared の本番コード・テストの補助（test-support/・spec/ の support.ts・apps/e2e/ の spec 以外）・frontend の React 以外のモジュール（features/・shared/ の .ts）を対象にし、テスト・E2E の .spec.ts・リポジトリ直下・frontend の .tsx・.hook.ts・app/・直下のファイルは対象にしない（列挙が壊れて素通りするのを防ぐ）",
+      "最上位に関数を置かない規則は、apps/backend の本番コード（層・expose・drizzle.config.ts）・apps/shared の本番コード・テストの補助（test-support/・spec/ の support.ts・apps/e2e/ の spec 以外）・frontend の React 以外のモジュール（features/・shared/ の .ts と spec/ の support.ts）を対象にし、テスト・E2E の .spec.ts・リポジトリ直下・frontend の .tsx・.hook.ts・app/・直下のファイルは対象にしない（列挙が壊れて素通りするのを防ぐ）",
       () => {
         // given: 前提なし
         // when
@@ -10801,6 +10833,7 @@ describeFeature(feature, ({ Scenario }) => {
             "apps/frontend_customer/shared/i18n/locale.ts",
             "apps/frontend_customer/shared/i18n/format.ts",
             "apps/frontend_customer/shared/request-log/request-log.ts",
+            "apps/frontend_customer/spec/screen/todo/support.ts",
           ]),
         );
 
