@@ -7588,6 +7588,16 @@ const NO_STATIC_IN_INSTANCE_CLASS_EXAMPLES: {
         "}",
       ),
     ],
+    // 16: frontend の画面仕様の補助（spec/screen/<f>/support.ts。class-based と同じ範囲）。
+    [
+      "apps/frontend_customer/spec/screen/todo/support.ts",
+      lines(
+        "export class A {",
+        "  run(): void {}",
+        "  static helper(): void {}",
+        "}",
+      ),
+    ],
   ],
   allowed: [
     // 0: static だけのクラス（Clock・TodoApi の形）。
