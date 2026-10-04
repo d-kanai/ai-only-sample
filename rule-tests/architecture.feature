@@ -31,6 +31,8 @@ Feature: ディレクトリ構成ルール（依存の向き）
     * apps/backend/features/<a>/ の下のファイルは、他のモジュール（apps/backend/features/<b>/、b ≠ a）の internal/ を参照しない（型だけ・re-export も）
     * 他のモジュールの apps/backend/features/<b>/expose/ を参照してよいのは、apps/backend/features/<a>/internal/presentation/ の下のファイルだけ（application・domain・infra・expose からは不可）
     * apps/backend/features/<f>/expose/ が参照してよい自前コードは、自モジュールの internal/・expose/、apps/backend/shared/、apps/shared/ の env・logger・now だけで（他のモジュールは不可）、next・react も参照しない
+    * apps/frontend_customer/ の本番コードが "zod"（とサブパス）を参照してよいのは apps/frontend_customer/shared/validation/zod.ts だけ（型だけも違反。@hookform/resolvers/zod は可。テストは除く）
+    * "zustand"（とサブパス）を参照してよいのは apps/frontend_customer/shared/stores/ と apps/frontend_customer/features/<f>/stores/ の下のファイルだけ（型だけも違反。テストは除く）
     * モジュールの境界の規則は、本物の expose（notification の notifier.ts）の参照と、それを使う todo の presentation の参照を取り出せている（列挙が壊れて素通りするのを防ぐ）
     * process.env を直接読んでよいのは apps/shared/env.ts だけ（例外は apps/frontend_customer/instrumentation.ts の NEXT_RUNTIME だけ。apps/frontend_customer・apps/backend・apps/shared・apps/e2e/ とルート直下の設定ファイルが対象。テストは除く）
     * console を直接書いてよいのは apps/shared/logger.ts だけ（apps/frontend_customer・apps/backend・apps/shared・apps/e2e/・scripts/ とルート直下の設定ファイルが対象。テストは除く）
@@ -47,6 +49,8 @@ Feature: ディレクトリ構成ルール（依存の向き）
     * 規則 class-based の対象のファイルでは、インスタンスのメンバー（コンストラクタ・static でないメソッド・フィールド・アクセサ）を持つクラスに static のメンバーを置かない（自分のクラスか Promise<自分のクラス> を返す static のファクトリは可。static だけのクラスは対象外）
     * apps/backend/features/<f>/internal/domain/ のクラスのフィールド（プロパティ宣言とコンストラクタの引数のプロパティ）は、型注釈に string・number・bigint を含まない（string[]・string | undefined などの合成も違反。値は VO のクラスにする。VO が中身を持つ名前 value のフィールドは可。boolean・Date・ほかのクラスや型の参照は可。テストは除く）
     * domain の値を VO にする規則は、apps/backend/features/<f>/internal/domain/ の本番コード（todo.ts・feature-flags.ts）を対象にし、テストと domain の外は対象にしない（列挙が壊れて素通りするのを防ぐ）
+    * apps/frontend_customer/ の本番コードは react の useCallback・useMemo・memo を使わない（"react" からの名前付きの import・別名・re-export と、React.useMemo のような名前空間の参照が違反。React Compiler がメモ化する。テストは除く）
+    * 手の memo の規則は、apps/frontend_customer の本番コード（画面の hook・Provider・app/ の layout・test-support/）を対象にし、テストと apps/frontend_customer の外は対象にしない（列挙が壊れて素通りするのを防ぐ）
     * 最上位に関数を置かない規則は、apps/backend の本番コード（層・expose・drizzle.config.ts）・apps/shared の本番コード・テストの補助（test-support/・spec/ の support.ts・apps/e2e/ の spec 以外）・frontend の React 以外のモジュール（features/・shared/ の .ts）を対象にし、テスト・E2E の .spec.ts・リポジトリ直下・frontend の .tsx・.hook.ts・app/・直下のファイルは対象にしない（列挙が壊れて素通りするのを防ぐ）
     * apps/backend/package.json の exports は、外（apps/frontend_customer・apps/e2e/・リポジトリ直下）が "@repo/backend/..." で参照するものをすべて含み、参照されないキーを持たず、各キーはそのパスの .ts を指す
     * apps/shared/package.json の exports は、外（apps/frontend_customer・apps/backend・apps/e2e/・リポジトリ直下）が "@repo/shared/..." で参照するものをすべて含み、参照されないキーを持たず、各キーはそのパスの .ts を指す
@@ -126,6 +130,9 @@ Feature: ディレクトリ構成ルール（依存の向き）
   Scenario: domain のクラスのフィールドに primitive を置かない規則の判定（domain-value-object）
     * 違反例（DOMAIN_VALUE_OBJECT_EXAMPLES.violating）はすべて違反になる
     * 許可例（DOMAIN_VALUE_OBJECT_EXAMPLES.allowed）はどれも違反にならない
+  Scenario: 手の memo を書かない規則の判定（frontend-no-manual-memo）
+    * 違反例（MANUAL_MEMO_EXAMPLES.violating）はすべて違反になる
+    * 許可例（MANUAL_MEMO_EXAMPLES.allowed）はどれも違反にならない
   Scenario: 最上位の関数の抽出（findTopLevelFunctions）
     * 最上位の関数ごとに宣言の書き出しの行番号を返す（オーバーロードは宣言ごと、1 つの文の変数は関数のものだけ、クラスの中は返さない）
   Scenario: 規則ごとの判定
@@ -201,6 +208,12 @@ Feature: ディレクトリ構成ルール（依存の向き）
     * 違反例（RULE_EXAMPLES の violating）はすべて違反になる
     * 許可例（RULE_EXAMPLES の allowed）はどれも違反にならない
   Scenario: 規則ごとの判定（app-api）
+    * 違反例（RULE_EXAMPLES の violating）はすべて違反になる
+    * 許可例（RULE_EXAMPLES の allowed）はどれも違反にならない
+  Scenario: 規則ごとの判定（frontend-zod-entry）
+    * 違反例（RULE_EXAMPLES の violating）はすべて違反になる
+    * 許可例（RULE_EXAMPLES の allowed）はどれも違反にならない
+  Scenario: 規則ごとの判定（zustand-in-stores）
     * 違反例（RULE_EXAMPLES の violating）はすべて違反になる
     * 許可例（RULE_EXAMPLES の allowed）はどれも違反にならない
   Scenario: exports のキーの照合（resolveExportKey）

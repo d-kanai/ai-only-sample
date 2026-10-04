@@ -24,12 +24,14 @@ paths:
 | feature | `components/`: feature 内で画面をまたぐ部品（atom を組み合わせて描く）の置き場所で、今は無い。1 つの画面だけで使う部品は画面のファイルの中に export せずに置く（下の「画面の骨組み」。一覧の 1 行 `TodoItem` は一覧画面だけが使うので `todo-screen.tsx` の中。Issue #340） | - | レビュー |
 | feature | `hooks/`: 画面をまたぐ hook | - | 説明 |
 | feature | `api/`: `/api/...` を fetch する薄いラッパー。feature の中で backend を参照してよいのはここだけ | - | `rule-tests/architecture.test.ts` の `screen-to-backend` |
+| feature | `api/<feature>-queries.ts`: TanStack Query のクエリのキーと取得の関数の組（クラス `<Feature>Queries`。下の「データ取得とレンダリング」） | どの API をどのキーで覚えるかを、取得の経路「hook → `api/` → `/api/...`」の `api/` の側の 1 か所にする | レビュー |
+| feature | `stores/`: その feature の画面をまたいで共有するクライアントだけの状態（zustand の store。下の「クライアントの共有状態」）。使うものが出るまで作らない | 共有の状態の一覧をディレクトリで読めるようにする | `rule-tests/architecture.test.ts` の `zustand-in-stores` |
 | feature | `index.ts`: 公開 API。feature の外（`app/`・他の feature）から import してよいのはここだけ | 内部の構成を変えても外の import を直さずに済む | `rule-tests/architecture.test.ts` の `feature-to-feature`・`app` |
-| shared | `apps/frontend_customer/shared/<name>/`: feature をまたぐ部品。今あるのは `request-log/`（リクエストログの 1 行を組み立てる純粋な処理。`RequestLogBuilder.build`）と `security/`（応答のセキュリティヘッダの値。`SecurityHeaders`。下の「セキュリティヘッダ」）と `i18n/`（翻訳の仕組み・共通の辞書・ロケール・日時の表示。下の「i18n」）と `ui/`（デザインシステム。下の「デザインシステム」） | - | 説明 |
+| shared | `apps/frontend_customer/shared/<name>/`: feature をまたぐ部品。今あるのは `request-log/`（リクエストログの 1 行を組み立てる純粋な処理。`RequestLogBuilder.build`）と `security/`（応答のセキュリティヘッダの値。`SecurityHeaders`。下の「セキュリティヘッダ」）と `i18n/`（翻訳の仕組み・共通の辞書・ロケール・日時の表示。下の「i18n」）と `ui/`（デザインシステム。下の「デザインシステム」）と `query/`（TanStack Query の `QueryProvider`。下の「データ取得とレンダリング」）と `validation/`（画面で使う zod の入口 `zod.ts`。下の「フォーム」）。feature をまたいで共有するクライアントの状態の store は `stores/` に置く（今は無い。下の「クライアントの共有状態」） | - | 説明 |
 | shared | 画面をまたぐ見た目の部品は `ui/atoms/` の atom にし、`shared/components/` は作らない（feature の中で画面をまたぐ部品は `features/<f>/components/`） | 以前は「`components/` は使うものが出るまで作らない」だったが、Issue #292 で画面をまたぐ部品（Mantine を包むもの）が出て、置き場所を `ui/atoms/` にした。Mantine を import してよいのは `shared/ui/` の中だけ（規則 `design-system-mantine-boundary`）なので、Mantine を包む部品は `shared/components/` には置けない。限界: `shared/components/` を作ること自体と、Mantine を使わない部品を置くことは止めない | `rule-tests/design-system.test.ts` の `design-system-mantine-boundary` |
 | shared | `shared/components/` を作らない・`hooks/` は使うものが出るまで作らない（Mantine を使わない部品の置き場所） | `design-system-mantine-boundary` は Mantine の参照だけを見る | レビュー |
 | shared | `apps/frontend_customer/shared/`（画面側の部品）と `apps/shared/`（frontend と backend で共通のサーバ側の基盤。`.claude/rules/code/shared.md`）は別のもの | - | 説明 |
-| test-support | `apps/frontend_customer/test-support/`（Issue #181）: テストだけが使うコード（`i18n.tsx` の `JaLocale`・`tJa`、`design-system.tsx` の `DesignSystem`）を置く | WHY は `.claude/rules/code/backend.md` の `apps/backend/test-support/` と同じ | 説明 |
+| test-support | `apps/frontend_customer/test-support/`（Issue #181）: テストだけが使うコード（`i18n.tsx` の wrapper の `JaLocale`・`EnLocale`（デザインシステム・ロケール・`QueryProvider` で包む）と期待値の翻訳 `tJa`、`design-system.tsx` の `DesignSystem`）を置く。`i18n.tsx` は TanStack Query の通知の時機をテストの中だけ microtask に替える（下の「テスト」） | WHY は `.claude/rules/code/backend.md` の `apps/backend/test-support/` と同じ | 説明 |
 | test-support | 本番のコード（`app/`・`features/`・`shared/`・直下のファイル）から参照しない（`@/test-support/...` はテストからだけ） | WHY は `.claude/rules/code/backend.md` の `apps/backend/test-support/` と同じ | `rule-tests/test-support.test.ts` の `production-imports-test-support` |
 | test-support | Docker のイメージに入らない（`.dockerignore` の `**/test-support`）。検査は `rule-tests/test-support.test.ts`（`.dockerignore` の行と、除外されるファイル）と `.github/workflows/deploy.yml`（push した runtime のイメージ。step があることは `deploy-verifies-images` が見る） | WHY は `.claude/rules/code/backend.md` の `apps/backend/test-support/` と同じ | `rule-tests/test-support.test.ts` の `dockerignore-entry`・`dockerignore-excludes`・`deploy-verifies-images`、`.github/workflows/deploy.yml` の `Verify runtime image has no test-support` |
 
@@ -117,6 +119,13 @@ export function TodoScreen() {
 | サーバロジック | 画面にサーバロジックを書かない。Server Components でのデータ取得や Server Functions（Server Actions）は使わず、データは hook → `api/` → `/api/...`（Route Handler）で取る | データ取得の経路を 1 本にし、サーバの処理を `apps/backend/` の 4 層に集める。画面と API の境界が HTTP になり、それぞれ単独でテストできる | レビュー |
 | 型の担保 | 型で担保されること: リクエスト / レスポンスの形（`pnpm build` / `pnpm typecheck` で不一致を検出） | - | `pnpm typecheck` |
 | 型の担保 | 型で担保されないこと: URL と HTTP メソッド（画面側に文字列で書く）、実行時の JSON の形（`response.json()` を型に当てはめるだけ）。URL を型で担保したくなったら、api ファイルから path の定数を export する案を検討する（今は入れない） | - | 説明 |
+| 取得 | hook はサーバのデータを TanStack Query の `useQuery` で取る。`useEffect` の中で取得しない | Effect での取得は、古い応答の上書き・unmount 後の更新・キャッシュを画面ごとに手で扱うことになる（React の文書も Effect での取得よりキャッシュのライブラリを勧める）。重複の排除・古い応答の破棄・再取得・キャッシュをライブラリに任せ、hook には何を取り、更新の後に何を取り直すかだけを書く。決定と採用しなかった案は ADR `docs/adr/tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md` | レビュー |
+| 取得 | クエリのキーと取得の関数は、feature の `api/<feature>-queries.ts` のクラス `<Feature>Queries` の static メソッド（`list()`・`detail(id)` など）が `queryOptions` で組にして返す。キーは 1 つの根から始める。hook は `useQuery(<Feature>Queries.list())` と書き、キャッシュを操作するときも `<Feature>Queries.<名前>(...).queryKey` でキーを取る | キーと関数を別々に書くと、同じキーに別の関数や型を結び付けられる。`queryOptions` はキーに data の型を載せるので、`setQueryData` も型で確かめられる。根を 1 つにすると feature のクエリをまとめて無効にできる | レビュー |
+| 更新 | 更新は `useMutation` で送る。更新の後は一覧のクエリを `invalidateQueries` で無効にして取り直させ、手元の一覧を書き換えない | サーバの一覧を正とし、並び順や他の更新の反映を画面側で再現しない | レビュー |
+| 更新 | 更新後の 1 件を応答で返す API は、その応答で 1 件のキャッシュを `setQueryData` で書き換える（キーは応答の id から作る）。削除に成功したら、その 1 件のキャッシュを `removeQueries`（`exact: true`）で捨てる | 1 件は取り直さずに応答を正にする。キーを応答の id から作ると、応答を待つ間に画面の id が変わっても別の 1 件を書き換えない。消えたものの 1 件のキャッシュを残すと、詳細の画面に戻ったときに消えたものを描き、取り直しが失敗しても TanStack Query は前の data を消さないので、消えたものとエラーが並んで出る | レビュー |
+| 更新 | `setQueryData` の前と、同じ画面で描いているクエリの取り直し（`invalidateQueries`）の前に、同じキーの送信中の取得を `cancelQueries` で取り消す（ほかの画面のクエリは、その画面を開いたときに取り直されるので invalidate だけでよい） | データの無いクエリ（初回の取得中）に取り直しを頼むと、TanStack Query は送信中の取得を使い回す（`cancelRefetch` はデータがあるときだけ効く）ので、更新の前の状態が表示される。`setQueryData` の後に送信中の古い取得の応答が届くと、更新した内容が古い内容に戻って見える | レビュー |
+| 失敗 | 画面に出す更新の失敗は hook の `useState` に持ち（`onError` で入れ、`onSuccess` で消す）、`useMutation` の `error` を表示に使わない。取得の失敗はクエリの `isError` / `error` を使い、更新の失敗を優先して 1 つだけ出す | `useMutation` は次の送信を始めた時点で前の `error` を消すので、失敗が続くと文言が消えてまた出る（ちらつく）。表示中の失敗は次の送信の成功・失敗で置き換える（下の「エラー表示」の表の「項目ごとの誤り」）。更新の失敗は利用者がいま行った操作の結果で、前からある取得の失敗より新しい | レビュー |
+| Provider | `QueryClient` は `shared/query/query-provider.tsx` の `QueryProvider` が `useState` で mount ごとに 1 回だけ作り、`app/layout.tsx` が全画面を包む。取得の再試行は止める（`retry: false`）。ほかの既定（`staleTime` 0・フォーカスでの再取得など）は変えない | モジュールの定数にすると、サーバの描画（SSR）ですべての要求がキャッシュを共有する。既定の再試行の間は読み込み中のままになり、1 回の失敗ですぐエラーを出せない | `apps/frontend_customer/shared/query/query-provider.test.tsx` |
 | prerender | ビルド時の Client Components の prerender は止めない。`output: "export"` と `next/dynamic` の `ssr: false` は、ブラウザ専用 API で困るまで使わない | `output: "export"` では Route Handler が GET だけのビルド時の静的なレスポンスになる。ブラウザ専用 API は `useEffect` の中で触れば prerender と両立する | レビュー |
 | prerender | 例外: i18n のため root layout が `headers()` を読むので、今は全ルートが動的レンダリングで、ビルド時の prerender は無い（下の「i18n」の限界）。ここで止めないのは `output: "export"` / `ssr: false` のような静的化・SSR の無効化のこと | - | 説明 |
 
@@ -144,9 +153,37 @@ export function TodoScreen() {
 | ロケールの決め方 | `proxy.ts` が Cookie `NEXT_LOCALE` → Accept-Language（q 値の高い順、言語の部分で照合）→ 既定の ja で決め（`Locales.negotiate`）、リクエストヘッダ `x-locale` に載せる（`/api/**` には載せない）。`app/layout.tsx` が `headers()` で読み、`<html lang>` と `LocaleProvider` に渡す | - | 説明 |
 | ロケールの決め方 | URL のパスは変えない（`app/[lang]` にしない） | - | レビュー |
 | ロケールの決め方 | 限界: `headers()` を読むので全画面が動的レンダリングになり、ビルド時の静的な prerender は無い。matcher が除く `next/link` のプリフェッチには `x-locale` が付かないが、root layout はクライアント遷移で描き直されないので表示は変わらない（E2E `apps/e2e/spec/i18n.feature`） | 限界（この方式で失うもの） | 説明 |
-| 日時の表示 | `shared/i18n/format.ts` の `DateTimeFormatter.format(iso, locale, timeZone)`（`Intl.DateTimeFormat`、`dateStyle: "medium"` / `timeStyle: "short"`）に、ブラウザのタイムゾーン（`Intl.DateTimeFormat().resolvedOptions().timeZone`）を渡す | DB は timestamptz（UTC）で API は ISO 8601。表示だけを利用者のタイムゾーンで行う。ブラウザのタイムゾーンを描画で読んでよいのは、一覧が useEffect の取得後にブラウザでだけ描かれるため（hydration の不一致にならない） | レビュー |
+| 日時の表示 | `shared/i18n/format.ts` の `DateTimeFormatter.format(iso, locale, timeZone)`（`Intl.DateTimeFormat`、`dateStyle: "medium"` / `timeStyle: "short"`）に、ブラウザのタイムゾーン（`Intl.DateTimeFormat().resolvedOptions().timeZone`）を渡す | DB は timestamptz（UTC）で API は ISO 8601。表示だけを利用者のタイムゾーンで行う。ブラウザのタイムゾーンを描画で読んでよいのは、日時がブラウザでの取得（`useQuery`）の後にだけ描かれ、サーバの描画では読み込み中のため（hydration の不一致にならない） | レビュー |
 | 日時の表示 | サーバは UTC で動かす（リポジトリ直下の `package.json` の `dev` / `start` の `TZ=UTC`、`instrumentation-node.ts` が UTC でなければ起動を止める） | サーバの動作は環境のタイムゾーンに依存させない | `apps/frontend_customer/instrumentation-node.ts` の `UTC` |
 | 日時の表示 | テストは `vitest.config.mts` の `test.env.TZ = "UTC"`、E2E はブラウザを `ja-JP` / `Asia/Tokyo` にする（`apps/e2e/playwright.config.ts`） | - | 説明 |
+
+## フォーム
+
+| カテゴリ | WHAT | WHY | 強制 |
+| --- | --- | --- | --- |
+| ライブラリ | フォームの値と送る前の検査は React Hook Form（`useForm`）で持ち、検査は `zodResolver`（`@hookform/resolvers/zod`）に zod のスキーマを渡して書く | 入力の値・検査・送った後の reset を自前の `useState` で書かず、検査をスキーマで宣言する。決定は ADR `docs/adr/tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md` | レビュー |
+| zod | 画面の zod は `@/shared/validation/zod` の `z` を使い、`"zod"`（サブパスも）を直接 import しない | zod 4 は eval が使えるかを `new Function` で試し、ブラウザが画面の CSP（`'unsafe-eval'` を入れない。下の「セキュリティヘッダ」）の違反として報告する。`shared/validation/zod.ts` が `z.config({ jitless: true })` で試しを止めてから `z` を渡す | `rule-tests/architecture.test.ts` の `frontend-zod-entry` |
+| 値の規則 | 値の規則（長さの上限・形式）の正は backend の domain。画面のスキーマは空白だけの入力を送らない程度（`z.string().trim().min(1)`）にとどめ、画面では文言を出さずに送らないだけにする。サーバの誤り（Problem Details の `errors`）は下の「エラー表示」のとおり出す | 規則を画面とサーバの 2 か所に書くとずれ、サーバの 400 と同じ文言を画面にも持つことになる | レビュー |
+| atom | atom の入力（`TextInput` など）は `value` / `onChange` の制御コンポーネントのまま、`useController` で React Hook Form に繋ぐ（`register` は使わない） | `register` は ref で DOM の値を読む非制御の形で、atom の API（文字列で受け渡す）を変えることになる | レビュー |
+| atom | hook が返す入力の変更の関数は、`field.onChange` の戻り値を捨てて（`void`）何も返さない | `field.onChange` は Promise を返す。返すと `act(() => setX(...))` が非同期の act になって閉じず、以後の描画が止まった（react-hook-form 7.89.0 で実測） | レビュー |
+| 編集 | 取得した値で入力を埋めるのは最初に届いたときの 1 回だけにし（`useForm` の `values` に渡す値を hook の state で固定する）、保存に成功したら応答の値で `reset` する。再取得（フォーカス・更新の応答）で編集中の入力を上書きしない | 別の端末で変えた値が届いても、編集中（未保存）の入力を黙って書き換えない。`resetOptions.keepDirtyValues` は、保存の応答で入力を置き換えるときも入力を残してしまった（react-hook-form 7.89.0 で実測） | レビュー |
+| スキーマ | スキーマは hook の中で作る（モジュールの最上位に置かない） | 最上位の式は mutation testing で数えない（`stryker.config.mjs` の `ignoreStatic`）。描画ごとの作り直しは React Compiler のメモ化に任せる | レビュー |
+
+## メモ化
+
+| カテゴリ | WHAT | WHY | 強制 |
+| --- | --- | --- | --- |
+| 手の memo | react の `useCallback`・`useMemo`・`memo`（`React.memo` なども）を手で書かない | React Compiler（`next.config.ts` の `reactCompiler: true`）がビルドのときに component と hook をメモ化する。手で書くと、依存配列の書き間違い（古い値を使い続ける）と、依存配列の変異が等価になる（Stryker で除外が要る）ことを抱える。決定は ADR `docs/adr/tech-stack/20261003-tanstack-query-react-hook-form-react-compiler.md` | `rule-tests/architecture.test.ts` の `frontend-no-manual-memo` |
+| テスト | Vitest は React Compiler を通さずに動かす。テストは memo の有無に依らない振る舞いを見る | - | 説明 |
+
+## クライアントの共有状態
+
+| カテゴリ | WHAT | WHY | 強制 |
+| --- | --- | --- | --- |
+| 使い分け | 状態の持ち方: サーバのデータ（取得の結果・読み込み中・失敗）は TanStack Query、フォームの値は React Hook Form、1 画面の状態は `useState` と画面の hook。zustand は、画面をまたいで共有するクライアントだけの状態（サーバに無い・URL に載せない UI の状態など）にだけ使う | 同じ状態を 2 か所に持つと正が 2 つになり、片方だけ古くなる。サーバのデータを store に写すと、TanStack Query の無効化・再取得が store に届かない。決定と採用しなかった案は ADR `docs/adr/tech-stack/20261003-zustand-for-client-shared-state.md` | レビュー |
+| 置き場所 | store は `features/<f>/stores/`（1 つの feature の画面をまたぐ状態）か `shared/stores/`（feature をまたぐ状態）の下に置き、`"zustand"`（サブパスも）を import してよいのはこの下だけ。画面・hook は store のファイルが export する hook を使う | 共有の状態の一覧がディレクトリで読め、「store にしてよい状態か」をレビューで見る場所が 1 つになる。zustand への依存を `stores/` に閉じ込め、ライブラリを替えるときに `stores/` の中だけを直せばよい | `rule-tests/architecture.test.ts` の `zustand-in-stores` |
+| 作り方 | store はモジュールの最上位で作らない。`stores/` の `<name>-store.tsx`（Provider を置くので `.tsx`。React のファイルなので最上位の関数でよい）に、store を作る関数（`zustand/vanilla` の `createStore`）と、それを `useState` で mount ごとに 1 回作って context で配る Provider と、値を選んで読む hook を置く | モジュールの最上位の store は、Next のサーバの描画（SSR）ではすべての要求で共有される。zustand の Next.js の手引きも、グローバルの store を置かず要求ごとに作ることを勧めている（`QueryProvider` の `QueryClient` と同じ形） | レビュー |
+| 置き場所 | 今は store が無い。使うものが出たら作る（`stores/` も同じ） | - | 説明 |
 
 ## エラー表示
 
@@ -201,7 +238,7 @@ export function TodoScreen() {
 | カテゴリ | WHAT | WHY | 強制 |
 | --- | --- | --- | --- |
 | クラス | `features/`・`shared/`・`test-support/` の React 以外のモジュール（`.ts` など。`*.tsx`・`*.jsx`・`*.hook.*` 以外）は、ファイルの最上位に関数を置かず、クラスのメソッド（状態が無ければ static だけのクラス。インスタンスで使うクラスには自分を返すファクトリ以外の static を置かない。規則 `no-static-in-instance-class`、Issue #300）にする。検査は `rule-tests/architecture.test.ts` の `class-based` | daiki の判断（2026-10-02「クラス必須でルールにして」）。backend・apps/shared と同じ形にそろえ、画面のテストの差し替えも `vi.mocked(TodoApi.list)` の形になる（`vi.mocked(Clock.now)` と同じ）。ADR `docs/adr/architecture/20261002-class-based-frontend-modules.md` | `rule-tests/architecture.test.ts` の `class-based`・`no-static-in-instance-class` |
-| クラス | 今あるもの: `TodoApi`（`list`・`get`・`create`・`rename`・`changeCompletion`・`delete`）・`ApiError`（`Error` を継承した例外のインスタンス。`status`・`type`・`key`・`params`・`errors`）・`ApiErrorMessage`（`toMessage`・`toMessages`）・`Locales`（`is`・`negotiate`・`fromHeader`）・`DateTimeFormatter`（`format`）・`RequestLogBuilder`（`build`）・`SecurityHeaders`（`contentSecurityPolicy`・`nonce`・`common`）。定数（`SUPPORTED_LOCALES`・`LOCALE_HEADER` など）と型はクラスの外の値のまま | - | 説明 |
+| クラス | 今あるもの: `TodoApi`（`list`・`get`・`create`・`rename`・`changeCompletion`・`delete`）・`TodoQueries`（`list`・`detail`）・`ApiError`（`Error` を継承した例外のインスタンス。`status`・`type`・`key`・`params`・`errors`）・`ApiErrorMessage`（`toMessage`・`toMessages`）・`Locales`（`is`・`negotiate`・`fromHeader`）・`DateTimeFormatter`（`format`）・`RequestLogBuilder`（`build`）・`SecurityHeaders`（`contentSecurityPolicy`・`nonce`・`common`）。定数（`SUPPORTED_LOCALES`・`LOCALE_HEADER` など）と型はクラスの外の値のまま | - | 説明 |
 | クラス | static だけのクラスの許可は `biome.json` の override（`.claude/rules/quality/lint.md`） | - | `biome.json` の `noStaticOnlyClass`、`rule-tests/lint.test.ts` の `noStaticOnlyClass` |
 | クラス | 対象外（関数のまま）: React の component（`*.tsx`・`*.jsx`。JSX を含むファイルの補助 `i18n.tsx` の `defineMessages`・`formatMessage` なども、ファイルごと外す）、hook（`*.hook.*`）、`app/` の下（Next の規約）、直下のファイル（`proxy.ts`・`instrumentation.ts`・`instrumentation-node.ts`・`next.config.ts`）。対象外の範囲を広げない | React と Next が関数の形を求める（クラスの component は非推奨、hook は Rules of Hooks、`proxy`・`register`・`page` の default export は規約）。`instrumentation-node.ts` は Vitest のカバレッジの対象外で、形を変えても単体テストで確かめられない | 説明 |
 | 命名 | ディレクトリ・ファイルは kebab-case（`todo-screen/`） | - | レビュー |
@@ -214,8 +251,10 @@ export function TodoScreen() {
 | カテゴリ | WHAT | WHY | 強制 |
 | --- | --- | --- | --- |
 | 書き方 | hook は `renderHook`、screen は render して操作し表示を検証する（どちらも jsdom。`vitest.config.mts` の既定） | - | レビュー |
+| 書き方 | 画面・atom の操作は `@testing-library/user-event`（`userEvent.setup()`）で行い、`fireEvent` は使わない | `fireEvent` はイベントを 1 つ送るだけで、ブラウザでの操作（フォーカス・キー入力・クリックの順）を再現しない（Testing Library の推奨） | レビュー |
 | 書き方 | `api/` は `vi.mock` で差し替える（`.claude/rules/quality/testing.md`） | - | レビュー |
-| 書き方 | Mantine で描く画面・部品は Provider で包む必要がある。`test-support/i18n.tsx` の `JaLocale` が `test-support/design-system.tsx` の `DesignSystem`（`DesignSystemProvider` と jsdom に無い `window.matchMedia` の代わり）も含むので、画面のテストは今までどおり `JaLocale` を wrapper にする | - | レビュー |
-| i18n | 画面・components は `test-support/i18n.tsx`（`@/test-support/i18n`）の `JaLocale` を wrapper にして描き、期待する文言は `tJa(todoScreenMessages, key, params)`（対応する辞書で翻訳した結果）と比べる | 言い回しの変更でテストを直さずに済む | レビュー |
+| 書き方 | 画面・hook は Provider で包む必要がある（Mantine で描き、`useQuery` / `useMutation` は `QueryClient` が要る）。`test-support/i18n.tsx` の `JaLocale`（en は `EnLocale`）が `test-support/design-system.tsx` の `DesignSystem`（`DesignSystemProvider` と jsdom に無い `window.matchMedia` の代わり）と `LocaleProvider` と `QueryProvider` で包むので、画面・hook のテストはこれを wrapper にする | 本番の `app/layout.tsx` と同じ Provider で包む。`QueryProvider` は mount ごとに `QueryClient` を作るので、テストごとに空のキャッシュから始まる | レビュー |
+| 非同期 | `test-support/i18n.tsx` は TanStack Query がキャッシュの変化を hook に知らせる時機を microtask に替える（`notifyManager.setScheduler(queueMicrotask)`）。hook のテストは、応答を返した後に setTimeout(0) を 1 回待てば知らせが届いている | 既定の setTimeout(0) では知らせの時機がタイマーの順に左右され、知らせの前の値を見て落ちることがあった。限界: 時機が本番と違うので、知らせの遅れに依存する不具合はテストで見えない | 説明 |
+| i18n | 画面・components は `test-support/i18n.tsx`（`@/test-support/i18n`）の `JaLocale` を wrapper にして描き（en は `EnLocale`）、期待する文言は `tJa(todoScreenMessages, key, params)`（対応する辞書で翻訳した結果）と比べる | 言い回しの変更でテストを直さずに済む | レビュー |
 | i18n | en で描いて英語になることも画面ごとに 1 件見る（辞書の en の中身はここで見る） | - | レビュー |
 | i18n | 仕組み（`defineMessages`・`useT` など）は `shared/i18n/i18n.test.tsx` がテスト用の辞書で固定する | - | 説明 |
