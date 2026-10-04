@@ -28,7 +28,7 @@ paths:
 `ci.yml` の `ci` ジョブと `deploy.yml` は `scripts/security/scan.sh` で gitleaks・actionlint・zizmor・hadolint・Trivy・Semgrep を動かす。ワークフローは actionlint と zizmor が見るので、`run:` に式（`${{ }}`）を埋め込まず `env:` で渡し、checkout には `persist-credentials: false` を付ける（zizmor の template-injection / artipacked）。規則・抑え方は `.claude/rules/tooling/security-scan.md`、組み込みの検査は `rule-tests/security-scan.test.ts`。
 
 ## Claude Code を Actions で動かすとき（Issue #354）
-今は `security-review.yml`（main に前回のレビュー以降に入った差分の日次セキュリティレビュー。決定は ADR `docs/adr/workflow/20261002-daily-security-review-in-actions.md`）だけ。
+今は `security-review.yml`（main に前回のレビュー以降に入った差分の日次セキュリティレビュー。決定は ADR `docs/adr/workflow/20261002-daily-security-review-in-actions.md`、モデル（Opus）と読み方は `docs/adr/workflow/20261003-security-review-opus-file-by-file.md`）だけ。
 - 認証は repo の Secret `CLAUDE_CODE_OAUTH_TOKEN`（daiki が `claude setup-token` で作る。サブスクの枠）。モデルは `--model` で明示する（`.claude/settings.json` の model はオーケストレータ用）。
 - action は Claude GitHub App のトークン（書き込み権限あり）を Claude の環境に渡す。Claude の権限は `--allowedTools` で読み取りに絞り（Write も渡さない）、結果は `--json-schema` で返させ、GitHub への書き込みは決まった形の別のステップが行う。Claude の出力は `run:` に式で埋め込まず `env:` で渡す。WHY: claude-code-action の docs/security.md の「権限は最小に」。プロンプトインジェクションで書き込みの口を使わせない。
 - runner の中だけ `.claude/settings.json` の hooks と model を外してから呼ぶ（permissions などそれ以外は CI の Claude にも効く）。WHY: OAuth では `--bare`（フックを読まない）が使えず（https://code.claude.com/docs/en/headless.md ）、Stop フック `require-work-log.sh` が作業ログを求めて turn を無駄にする。

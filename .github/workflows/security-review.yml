@@ -1,7 +1,8 @@
 # main に前回のレビュー以降に入った差分を、Claude Code でセキュリティの観点からレビューする日次ジョブ（Issue #354）。
 # WHY 日次で main の差分: PR ごとの /security-review は PR のたびに消費が増える（ADR docs/adr/workflow/20260929-save-usage-limit.md）。
 #   前回からの差分だけを 1 日 1 回見れば、1 回のコストは小さく、main に入ったものは漏れなく 1 度見られる（daiki の判断 2026-10-02）。
-# 決定と採用しなかった案は ADR docs/adr/workflow/20261002-daily-security-review-in-actions.md、規則は .claude/rules/tooling/github-actions.md。
+# 決定と採用しなかった案は ADR docs/adr/workflow/20261002-daily-security-review-in-actions.md（モデルと読み方は
+#   docs/adr/workflow/20261003-security-review-opus-file-by-file.md で置き換え）、規則は .claude/rules/tooling/github-actions.md。
 name: Security review
 
 on:
@@ -31,9 +32,9 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
-    # WHY 20 分: 1 日分の差分を読むだけで、Claude の turn も --max-turns で抑える。ci（中央値 145 秒）より長い見込みだが、
-    #   実際の所要時間は未確認（初回の実行で確かめて直す）。
-    timeout-minutes: 20
+    # WHY 45 分: 初回（Sonnet・49 コミット・約 1.1 万行）は Claude が 8 turn・約 20 秒で終わり、浅かった（Issue #435）。
+    #   Opus で変更ファイルを 1 つずつ読ませると turn も時間も増える。Opus での実際の所要時間は未確認（次の実行で確かめて直す）。
+    timeout-minutes: 45
     steps:
       # fetch-depth: 0 … 前回のレビューの時点（か 24 時間前）の main のコミットを起点にするため、履歴をすべて取る（既定の 1 だと起点が無い）。
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -76,11 +77,21 @@ jobs:
           jq 'del(.hooks, .model)' .claude/settings.json > "$RUNNER_TEMP/settings.json"
           mv "$RUNNER_TEMP/settings.json" .claude/settings.json
 
+      # git が非 ASCII のパスを "src/\346\227..." のように引用しないようにする（この runner の checkout の .git/config だけ）。
+      # WHY: Claude は `git diff --name-only` の出力のパスを `git diff ... -- <file>` に渡すので、引用されたままだと差分が空になり、
+      #   そのファイルを読まずに終わる（Codex の指摘）。`git -c core.quotePath=false` は --allowedTools の `Bash(git diff:*)` に
+      #   一致しないので、プロンプトではなく設定で切る。
+      - name: Disable git path quoting for Claude
+        if: steps.range.outputs.count != '0'
+        run: git config core.quotePath false
+
       # 差分が 0 件の日は呼ばない（消費 0）。
       # claude_code_oauth_token: daiki が `claude setup-token` で作ったトークン（サブスクの枠を使う。repo の Secret）。
       # claude_args:
-      #   --model claude-sonnet-5-5 … 1 日分の差分を読むだけなので、消費の小さい Sonnet にする（足りなければ Opus に上げる）。
-      #   --max-turns 40 … 読みすぎて長引かないよう上限を置く。
+      #   --model claude-opus-5-5 … 初回の Sonnet は 1.1 万行の差分を 8 turn で「指摘なし」とし、浅かった（Issue #435。daiki の判断
+      #     2026-10-03「深くする」）。消費は増えるが、浅いレビューの「指摘なし」は安心の根拠にならない。
+      #   --max-turns 150 … 変更ファイルを 1 つずつ開くと 1 ファイル数 turn かかる。初回の規模（202 ファイル）でも途中で切れにくく、
+      #     それでも長引かないよう上限は置く。切れたら structured_output が無く、次のステップは動かない（次の実行が同じ起点から見直す）。
       #   --allowedTools … 読むことだけを許す（ファイルの書き込みも無し）。git は読み取りのサブコマンドだけ。
       #     WHY: action は Claude GitHub App のトークン（書き込み権限あり）を GITHUB_TOKEN / GH_TOKEN として Claude の環境に渡す
       #     （claude-code-action の src/entrypoints/run.ts。reviewer が確認）。プロンプトインジェクションで使われないよう、
@@ -94,20 +105,44 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: >-
-            --model claude-sonnet-5-5
-            --max-turns 40
+            --model claude-opus-5-5
+            --max-turns 150
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
-            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["critical","high","medium","low"]},"summary":{"type":"string"},"location":{"type":"string"},"exploit":{"type":"string"},"fix":{"type":"string"},"commit":{"type":"string"}},"required":["severity","summary","location","exploit","fix"]}}},"required":["findings"]}'
+            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string","enum":["critical","high","medium","low"]},"summary":{"type":"string"},"location":{"type":"string"},"exploit":{"type":"string"},"fix":{"type":"string"},"commit":{"type":"string"}},"required":["severity","summary","location","exploit","fix"]}},"reviewed_files":{"type":"array","items":{"type":"string"}}},"required":["findings","reviewed_files"]}'
 
           prompt: |
             このリポジトリの main に前回のレビュー以降に入った変更を、セキュリティの観点でレビューしてください。日本語で書きます。
 
             - 対象: `git diff ${{ steps.range.outputs.base }} HEAD`（コミットは `git log --oneline --first-parent ${{ steps.range.outputs.base }}..HEAD`）。docs/work-logs/ と画像は対象外。
             - 観点: インジェクション（SQL・コマンド）、XSS、認証・認可の抜け、秘密情報や個人情報の漏れ（ログへの出力を含む）、入力検証、暗号の使い方、危ない設定、依存とサプライチェーン（GitHub Actions を含む）、業務ロジックの穴。
-            - 差分の周りのコードも開いて読み、実際に悪用できる経路があるものだけを残してください（推測だけの指摘・一般論・スタイルは出さない）。
+            - 進め方: まず `git diff --name-only ${{ steps.range.outputs.base }} HEAD` で変更ファイルを一覧し、対象のファイルを 1 つずつ `git diff ${{ steps.range.outputs.base }} HEAD -- <file>` で読んでください。差分の全体を一度に読んで済ませないでください。
+            - 外から入る値（HTTP のリクエスト・環境変数・ワークフローの入力・外部のデータ）を扱う変更は、呼び出し元と行き先のコードも開いて、値がどこまで検証されずに届くかを追ってください。
+            - 実際に悪用できる経路があるものだけを残してください（推測だけの指摘・一般論・スタイルは出さない）。
             - コードは変更しないでください。
 
-            結果は指定の JSON で返してください。指摘ごとに severity（critical / high / medium / low）・summary（1 行の要約）・location（`file:line`）・exploit（悪用の経路）・fix（直し方の案）・commit（対象のコミット）。指摘が無ければ findings を空の配列にしてください。
+            結果は指定の JSON で返してください。reviewed_files には実際に差分を読んだファイルのパスをすべて入れてください（見ていないファイルはワークフローがログに出します）。指摘ごとに severity（critical / high / medium / low）・summary（1 行の要約）・location（`file:line`）・exploit（悪用の経路）・fix（直し方の案）・commit（対象のコミット）。指摘が無ければ findings を空の配列にしてください。
+
+      # 見ていない変更ファイルを出す。WHY: 初回は 1.1 万行を 8 turn で「指摘なし」とし、どこまで読んだかが分からなかった（Issue #435）。
+      #   Claude が返した reviewed_files と、プロンプトで対象にした変更ファイル（docs/work-logs/ と画像を除く）を比べ、
+      #   読んでいないファイルを warning とジョブのサマリに出す。Claude の書き方の揺れ（先頭の ./）は外し、git の非 ASCII のパスの
+      #   引用（core.quotePath）は切って、書き方の違いだけで「読んでいない」に数えないようにする（reviewer の指摘）。失敗にはしない（起点が進まず、毎回同じ範囲を見直し続けるのを避ける）。
+      - name: Report files Claude did not review
+        if: ${{ !cancelled() && steps.claude.outputs.structured_output != '' }}
+        env:
+          RESULT: ${{ steps.claude.outputs.structured_output }}
+          BASE: ${{ steps.range.outputs.base }}
+        run: |
+          git -c core.quotePath=false diff --name-only "$BASE" HEAD \
+            | grep -v -i -E '^docs/work-logs/|\.(png|jpe?g|gif|svg|webp|ico)$' | sort -u > "$RUNNER_TEMP/changed.txt" || true
+          jq -r '.reviewed_files[] | sub("^\\./"; "")' <<< "$RESULT" | sort -u > "$RUNNER_TEMP/reviewed.txt"
+          missing=$(comm -23 "$RUNNER_TEMP/changed.txt" "$RUNNER_TEMP/reviewed.txt")
+          changed=$(wc -l < "$RUNNER_TEMP/changed.txt")
+          unreviewed=$(grep -c . <<< "$missing" || true)
+          echo "reviewed $((changed - unreviewed)) / $changed changed files" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$unreviewed" -gt 0 ]; then
+            echo "::warning::Claude did not review $unreviewed changed files"
+            { echo; echo '見ていない変更ファイル:'; while read -r file; do echo "- $file"; done <<< "$missing"; } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # 指摘があるときだけ、指摘ごとに非公開の security advisory の下書きを作る（公開されない。repo の Security タブで管理者だけが読める）。
       # WHY Issue にしない: この repo は public で、直す前の脆弱性と悪用の手順が誰でも読める状態になる（reviewer の指摘。daiki の判断）。
